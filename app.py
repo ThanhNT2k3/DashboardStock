@@ -1,7 +1,7 @@
 """
 🇻🇳 Vietnam Stock Market Dashboard
 Phân tích độ rộng & sentiment thị trường chứng khoán Việt Nam
-Data source: VPS API (histdatafeed.vps.com.vn)
+
 """
 
 import streamlit as st
@@ -113,7 +113,7 @@ st.markdown("""
 st.markdown("""
 <div class="dashboard-header">
     <div class="dashboard-title">📊 VN Market Dashboard</div>
-    <div class="dashboard-subtitle">Phân tích độ rộng & sentiment thị trường chứng khoán Việt Nam · Data: VPS API</div>
+    <div class="dashboard-subtitle">Phân tích độ rộng & sentiment thị trường chứng khoán Việt Nam </div>
 </div>
 """, unsafe_allow_html=True)
 
