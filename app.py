@@ -137,7 +137,7 @@ with st.sidebar:
     with col_d1:
         start_date = st.date_input(
             "Từ ngày",
-            value=date.today() - timedelta(days=90),
+            value=date.today() - timedelta(days=720),
             min_value=date(2020, 1, 1),
             max_value=date.today(),
         )
@@ -200,7 +200,7 @@ with st.sidebar:
     bt_run = st.button("🚀 Chạy Backtest", use_container_width=True)
     
     st.markdown("---")
-    st.markdown("### 🔍 VN30 Stochastic Scanner")
+    st.markdown("### 🔍 VN100 Stochastic Scanner")
     scanner_run = st.button("📊 Quét tín hiệu VN30", use_container_width=True)
 
     st.markdown("---")
@@ -208,7 +208,7 @@ with st.sidebar:
     ai_ticker = st.text_input("Mã CP (AI)", value="SSI", key="ai_ticker_input", help="Phân tích mã CP kết hợp Vàng, Dầu, Lãi suất, Khối ngoại")
     ai_split = st.slider("Train/Test Split", 0.5, 0.9, 0.7, 0.1)
     ai_run = st.button("🤖 Chạy AI Backtest", use_container_width=True)
-    ai_scanner_run = st.button("🔍 Quét AI VN30", use_container_width=True, help="Quét toàn bộ rổ VN30 bằng mô hình AI đa nhân tố")
+    ai_scanner_run = st.button("🔍 Quét AI VN100", use_container_width=True, help="Quét toàn bộ rổ VN100 bằng mô hình AI đa nhân tố")
 
     st.markdown("---")
     ticker_list = tk.get_tickers(exchange)
@@ -345,7 +345,7 @@ if 'scanner_results' not in st.session_state:
     st.session_state.scanner_results = None
 
 if scanner_run:
-    with st.spinner("🔍 Đang quét tín hiệu Stochastic cho rổ VN30..."):
+    with st.spinner("🔍 Đang quét tín hiệu Stochastic cho rổ VN100..."):
         try:
             vn30_list = tk.VN30
             # Tải dữ liệu 200 ngày để Stoch chuẩn
@@ -453,9 +453,9 @@ if 'ai_scan_results' not in st.session_state:
     st.session_state.ai_scan_results = None
 
 if 'ai_scanner_run' in locals() and ai_scanner_run:
-    with st.spinner("🤖 Đang quét rổ VN30 bằng AI (kỹ thuật + vĩ mô + khối ngoại)..."):
+    with st.spinner("🤖 Đang quét rổ VN100 bằng AI (kỹ thuật + vĩ mô + khối ngoại)..."):
         try:
-            vn30_list = tk.VN30
+            vn30_list = tk.VN100
             ai_start = (date.today() - timedelta(days=730)).strftime('%Y-%m-%d')
             ai_end_s = end_date.strftime('%Y-%m-%d')
             
@@ -488,6 +488,32 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                         # Train mô hình nhanh cho mã này
                         engine.train(full_df)
                         signal = engine.predict(full_df)
+
+                        # Tính tỉ lệ Win/Loss lịch sử (backtest nhanh trên 25% dữ liệu cuối)
+                        win_rate_pct, win_count, loss_count = None, 0, 0
+                        test_size = max(20, int(len(full_df) * 0.25))
+                        test_df = full_df.tail(test_size)
+                        pos, entry_p, entry_d = None, 0.0, None
+                        for i in range(len(test_df)):
+                            row = test_df.iloc[i:i+1]
+                            pred = engine.predict(row)
+                            price = row['close'].values[0]
+                            dt = test_df.index[i]
+                            days_held = (dt - entry_d).days if entry_d is not None else 0
+                            if pos is None and pred == 2:
+                                pos, entry_p, entry_d = 'long', price, dt
+                            elif pos == 'long' and (pred == 0 or days_held >= 10):
+                                pnl = (price - entry_p) / entry_p
+                                if pnl > 0: win_count += 1
+                                else: loss_count += 1
+                                pos = None
+                        if pos == 'long':  # Đóng lệnh còn mở ở cuối
+                            pnl = (test_df['close'].iloc[-1] - entry_p) / entry_p
+                            if pnl > 0: win_count += 1
+                            else: loss_count += 1
+                        total = win_count + loss_count
+                        if total > 0:
+                            win_rate_pct = round(win_count / total * 100, 1)
                         
                         # Metadata cho hiển thị
                         last_close = t_data['close'][-1]
@@ -600,6 +626,8 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                         stop_loss_price = buy_price * 0.97 if buy_price else None
                         take_profit_price = buy_price * 1.08 if buy_price else None
                         
+                        win_loss_str = f"{win_rate_pct}% ({win_count}W/{loss_count}L)" if win_rate_pct is not None else "-"
+
                         ai_scan_rows.append({
                             'Mã': ticker,
                             'Giá hiện tại': f"{last_close:,.2f}",
@@ -609,6 +637,7 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                             'Giá cắt lỗ': f"{stop_loss_price:,.2f}" if stop_loss_price else "-",
                             'Giá chốt bán': f"{take_profit_price:,.2f}" if take_profit_price else "-",
                             'Lợi nhuận dự báo (%)': f"{pred_ret:+.2f}%",
+                            'Win/Loss': win_loss_str,
                             'Điểm tín hiệu': quality_score,
                             'Điều kiện đáp ứng': conditions_str,
                             'Tín hiệu': signal,
@@ -620,7 +649,7 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
             for r in ai_scan_rows:
                 r.pop('_pred_ret', None)
             
-            cols = ['Mã', 'Giá hiện tại', '% Thay đổi', 'Dự báo AI', 'Giá mua', 'Giá cắt lỗ', 'Giá chốt bán', 'Lợi nhuận dự báo (%)', 'Điểm tín hiệu', 'Điều kiện đáp ứng', 'Tín hiệu']
+            cols = ['Mã', 'Giá hiện tại', '% Thay đổi', 'Dự báo AI', 'Giá mua', 'Giá cắt lỗ', 'Giá chốt bán', 'Lợi nhuận dự báo (%)', 'Win/Loss', 'Điểm tín hiệu', 'Điều kiện đáp ứng', 'Tín hiệu']
             st.session_state.ai_scan_results = pd.DataFrame(ai_scan_rows, columns=cols)
         except Exception as e:
             st.error(f"❌ Lỗi quét AI VN30: {e}")
@@ -1026,9 +1055,15 @@ if st.session_state.scanner_results is not None:
 # ROW 10: AI Backtest Results
 # ══════════════════════════════════════════════
 if st.session_state.ai_results:
-    st.markdown('<div class="section-header">🤖 AI MULTI-FACTOR PREDICTION & BACKTEST (XGBOOST)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">🤖 AI MULTI-FACTOR PREDICTION & BACKTEST</div>', unsafe_allow_html=True)
     res_ai = st.session_state.ai_results
     ai_target = st.session_state.ai_target
+
+    st.markdown("""
+    <div style="background: rgba(0, 180, 216, 0.15); border-left: 4px solid #00B4D8; padding: 10px 14px; margin-bottom: 12px; border-radius: 4px; font-size: 0.9rem;">
+        <b>🧠 Mô hình AI:</b> Ensemble <b>XGBoost</b> + <b>RandomForest</b> • Features: kỹ thuật + vĩ mô + hàng hóa + khối ngoại
+    </div>
+    """, unsafe_allow_html=True)
     
     if 'summary' in res_ai:
         st.warning(res_ai['summary'])
@@ -1063,6 +1098,14 @@ if st.session_state.ai_results:
 if st.session_state.ai_scan_results is not None:
     st.markdown('<div class="section-header">🤖 AI VN30 OPPORTUNITY SCANNER (MULTI-FACTOR)</div>', unsafe_allow_html=True)
     df_ai_scan = st.session_state.ai_scan_results
+
+    # Hiển thị mô hình AI đang sử dụng
+    st.markdown("""
+    <div style="background: rgba(0, 180, 216, 0.15); border-left: 4px solid #00B4D8; padding: 10px 14px; margin-bottom: 12px; border-radius: 4px; font-size: 0.9rem;">
+        <b>🧠 Mô hình AI đang sử dụng:</b> Ensemble <b>XGBoost</b> + <b>RandomForest</b><br>
+        <span style="color:#888; font-size:0.85rem">Features: RSI, MA20/50, volatility, momentum, vàng, dầu, DXY, lãi suất Mỹ, nông sản, phân bón, khối ngoại • Ngưỡng BUY/SELL: 60%</span>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Cơ hội BUY
     buy_list = df_ai_scan[df_ai_scan['Tín hiệu'] == 2]['Mã'].tolist()
@@ -1083,7 +1126,8 @@ if st.session_state.ai_scan_results is not None:
             if pd.isna(cond) or not str(cond).strip():
                 continue
             sig_label = "🟢" if row['Tín hiệu'] == 2 else ("🔴" if row['Tín hiệu'] == 0 else "🟡")
-            st.markdown(f"**{sig_label} {row['Mã']}** — {row['Dự báo AI']} | LN dự báo: {row['Lợi nhuận dự báo (%)']}")
+            wl = row.get('Win/Loss', '-')
+            st.markdown(f"**{sig_label} {row['Mã']}** — {row['Dự báo AI']} | LN dự báo: {row['Lợi nhuận dự báo (%)']} | Win/Loss: {wl}")
             for line in str(cond).strip().split("\n"):
                 st.markdown(f"- {line}")
             st.markdown("---")
@@ -1092,6 +1136,7 @@ if st.session_state.ai_scan_results is not None:
         cols = [''] * len(row)
         sig_idx = row.index.get_loc('Dự báo AI')
         ret_idx = row.index.get_loc('Lợi nhuận dự báo (%)')
+        wl_idx = row.index.get_loc('Win/Loss')
         
         if row['Tín hiệu'] == 2: 
             cols[sig_idx] = 'background-color: rgba(0, 230, 118, 0.4); color: white; font-weight: bold'
@@ -1099,7 +1144,15 @@ if st.session_state.ai_scan_results is not None:
         elif row['Tín hiệu'] == 0: 
             cols[sig_idx] = 'background-color: rgba(255, 23, 68, 0.4); color: white; font-weight: bold'
             cols[ret_idx] = 'color: #FF1744'
-        
+        # Màu Win/Loss: xanh nếu ≥60%, đỏ nếu <40%
+        wl_val = str(row.get('Win/Loss', ''))
+        if wl_val != '-' and '%' in wl_val:
+            try:
+                pct = float(wl_val.split('%')[0])
+                if pct >= 60: cols[wl_idx] = 'color: #00E676; font-weight: bold'
+                elif pct < 40: cols[wl_idx] = 'color: #FF1744'
+            except ValueError:
+                pass
         return cols
 
     st.dataframe(
