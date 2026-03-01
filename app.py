@@ -463,10 +463,11 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
             raw_ai_scan = fetcher.batch_fetch(vn30_list, ai_start, ai_end_s)
             dict_ai_scan = fetcher.parse_results(raw_ai_scan)
             
-            # Tải dữ liệu vĩ mô chung một lần để tối ưu
+            # Tải dữ liệu vĩ mô & khối ngoại batch (tối ưu tốc độ)
             from modules.ai_engine import AIEngine
             engine = AIEngine()
             macro_df = engine.fetch_macro_data(ai_start, ai_end_s)
+            foreign_cache = engine.fetch_foreign_flow_batch(vn30_list, ai_start, ai_end_s)
             
             ai_scan_rows = []
             for ticker in vn30_list:
@@ -480,8 +481,7 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                         'volume': t_data['volume']
                     }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
                     
-                    # Chạy phân tích AI cho mã này
-                    foreign_df = engine.fetch_foreign_flow(ticker, ai_start, ai_end_s)
+                    foreign_df = foreign_cache.get(ticker, pd.DataFrame())
                     full_df = engine.prepare_features(df_t, macro_df, foreign_df)
                     
                     if not full_df.empty:
@@ -493,15 +493,112 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                         last_close = t_data['close'][-1]
                         change = t_data['change_pct']
                         
-                        # Lấy dự báo lợi nhuận từ dòng cuối cùng của full_df
-                        # Chú ý: TARGET_RET là 5-day forward return
-                        # Vì chúng ta predict signal cho phiên cuối, nên ta xem xét xác suất/giá trị kỳ vọng
-                        pred_ret = full_df['TARGET_RET'].iloc[-1] * 100
+                        # Lợi nhuận dự báo: trung bình TARGET_RET gần nhất (dòng cuối thường NaN)
+                        valid_ret = full_df['TARGET_RET'].dropna()
+                        pred_ret = valid_ret.tail(20).mean() * 100 if len(valid_ret) > 0 else 0.0
+                        
+                        # Chỉ coi là BUY khi lợi nhuận kỳ vọng đủ cao
+                        MIN_STRONG_RET = 3.0  # 3% cho 5 phiên tới
+                        if signal == 2 and pred_ret < MIN_STRONG_RET:
+                            signal = 1  # chuyển về HOLD nếu tín hiệu yếu
                         
                         label = "BUY 🚀" if signal == 2 else ("SELL ⚠️" if signal == 0 else "HOLD ⏳")
                         
+                        # Thu thập điều kiện cổ phiếu đáp ứng (từ dòng cuối full_df)
+                        last_row = full_df.iloc[-1]
+                        prev_row = full_df.iloc[-2] if len(full_df) > 1 else None
+                        conditions = []
+                        if signal == 2:
+                            conditions.append("✓ Tín hiệu AI: BUY")
+                        elif signal == 0:
+                            conditions.append("⚠ Tín hiệu AI: SELL")
+                        else:
+                            conditions.append("○ Tín hiệu AI: HOLD")
+                        if pred_ret >= 3.0:
+                            conditions.append(f"✓ Lợi nhuận dự báo ≥ 3% ({pred_ret:+.1f}%)")
+                        elif pred_ret > 0:
+                            conditions.append(f"✓ Lợi nhuận dự báo dương ({pred_ret:+.1f}%)")
+                        elif pred_ret < -3:
+                            conditions.append(f"⚠ Lợi nhuận dự báo âm ({pred_ret:+.1f}%)")
+                        rsi = last_row.get('RSI', 50)
+                        if rsi < 30:
+                            conditions.append(f"✓ RSI oversold ({rsi:.0f}) - cơ hội mua")
+                        elif rsi >= 70:
+                            conditions.append(f"⚠ RSI quá mua ({rsi:.0f})")
+                        elif rsi < 70:
+                            conditions.append(f"✓ RSI không quá mua ({rsi:.0f})")
+                        ma20 = last_row.get('MA20')
+                        if ma20 and last_close > ma20:
+                            conditions.append("✓ Giá trên MA20 (momentum)")
+                        elif ma20:
+                            conditions.append("○ Giá dưới MA20")
+                        ma50 = last_row.get('MA50')
+                        if ma50 and last_close > ma50:
+                            conditions.append("✓ Giá trên MA50 (xu hướng)")
+                        elif ma50:
+                            conditions.append("○ Giá dưới MA50")
+                        ff = last_row.get('foreignNetValue', 0)
+                        if ff > 0:
+                            conditions.append("✓ Khối ngoại mua ròng")
+                        elif ff < 0:
+                            conditions.append("○ Khối ngoại bán ròng")
+                        ret1d = last_row.get('RETURNS_1D', 0)
+                        if ret1d is not None and ret1d > 0:
+                            conditions.append("✓ Phiên gần nhất tăng giá")
+                        elif ret1d is not None and ret1d < 0:
+                            conditions.append("○ Phiên gần nhất giảm giá")
+
+                        # Điều kiện vĩ mô & giá hàng hóa toàn cầu (so với phiên trước)
+                        if prev_row is not None:
+                            def _macro_change(col_name: str) -> float | None:
+                                if col_name not in last_row or col_name not in prev_row:
+                                    return None
+                                cur = last_row.get(col_name)
+                                prev = prev_row.get(col_name)
+                                if cur is None or prev is None or prev == 0:
+                                    return None
+                                try:
+                                    return (cur / prev - 1.0) * 100.0
+                                except Exception:
+                                    return None
+
+                            gold_chg = _macro_change('GOLD')
+                            oil_chg = _macro_change('OIL')
+                            dxy_chg = _macro_change('DXY')
+                            us10y_chg = _macro_change('US10Y')
+
+                            if gold_chg is not None and abs(gold_chg) >= 1.0:
+                                direction = "tăng" if gold_chg > 0 else "giảm"
+                                conditions.append(f"○ Giá vàng thế giới {direction} khoảng {gold_chg:+.1f}% hôm nay")
+
+                            if oil_chg is not None and abs(oil_chg) >= 1.0:
+                                direction = "tăng" if oil_chg > 0 else "giảm"
+                                conditions.append(f"○ Giá dầu thô {direction} khoảng {oil_chg:+.1f}% hôm nay")
+
+                            if dxy_chg is not None and abs(dxy_chg) >= 0.5:
+                                direction = "tăng" if dxy_chg > 0 else "giảm"
+                                conditions.append(f"○ Chỉ số USD (DXY) {direction} khoảng {dxy_chg:+.1f}%")
+
+                            if us10y_chg is not None and abs(us10y_chg) >= 0.5:
+                                direction = "tăng" if us10y_chg > 0 else "giảm"
+                                conditions.append(f"○ Lợi suất TPCP Mỹ 10Y {direction} khoảng {us10y_chg:+.1f} điểm bps tương đối")
+
+                        if len(conditions) <= 1:
+                            conditions.append("— Không đủ điều kiện nổi bật")
+
+                        # Điểm chất lượng tín hiệu: dựa trên số điều kiện tích cực / tiêu cực
+                        positives = sum(1 for c in conditions if c.startswith("✓"))
+                        negatives = sum(1 for c in conditions if c.startswith("⚠"))
+                        raw_score = positives * 15 - negatives * 10
+                        quality_score = max(0, min(100, raw_score))
+
+                        conditions_str = "\n".join(conditions)
+                        
                         # Giá mua khuyến nghị (ví dụ: thấp hơn giá hiện tại 0.5% để tối ưu)
                         buy_price = last_close * 0.995 if signal == 2 else None
+                        # Giá cắt lỗ & chốt bán mặc định (-3%, +8%) - chỉ khi có tín hiệu BUY
+                        stop_loss_price = buy_price * 0.97 if buy_price else None
+                        take_profit_price = buy_price * 1.08 if buy_price else None
                         
                         ai_scan_rows.append({
                             'Mã': ticker,
@@ -509,12 +606,21 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                             '% Thay đổi': f"{change}%",
                             'Dự báo AI': label,
                             'Giá mua': f"{buy_price:,.2f}" if buy_price else "-",
+                            'Giá cắt lỗ': f"{stop_loss_price:,.2f}" if stop_loss_price else "-",
+                            'Giá chốt bán': f"{take_profit_price:,.2f}" if take_profit_price else "-",
                             'Lợi nhuận dự báo (%)': f"{pred_ret:+.2f}%",
-                            'Tín hiệu': signal
+                            'Điểm tín hiệu': quality_score,
+                            'Điều kiện đáp ứng': conditions_str,
+                            'Tín hiệu': signal,
+                            '_pred_ret': pred_ret
                         })
             
-            # Tạo DataFrame với cột mặc định để tránh KeyError nếu rỗng
-            cols = ['Mã', 'Giá hiện tại', '% Thay đổi', 'Dự báo AI', 'Giá mua', 'Lợi nhuận dự báo (%)', 'Tín hiệu']
+            # Sắp xếp theo lợi nhuận dự báo giảm dần → mã có khả năng lợi nhuận cao hiển thị trước
+            ai_scan_rows.sort(key=lambda r: -r['_pred_ret'])
+            for r in ai_scan_rows:
+                r.pop('_pred_ret', None)
+            
+            cols = ['Mã', 'Giá hiện tại', '% Thay đổi', 'Dự báo AI', 'Giá mua', 'Giá cắt lỗ', 'Giá chốt bán', 'Lợi nhuận dự báo (%)', 'Điểm tín hiệu', 'Điều kiện đáp ứng', 'Tín hiệu']
             st.session_state.ai_scan_results = pd.DataFrame(ai_scan_rows, columns=cols)
         except Exception as e:
             st.error(f"❌ Lỗi quét AI VN30: {e}")
@@ -958,12 +1064,29 @@ if st.session_state.ai_scan_results is not None:
     st.markdown('<div class="section-header">🤖 AI VN30 OPPORTUNITY SCANNER (MULTI-FACTOR)</div>', unsafe_allow_html=True)
     df_ai_scan = st.session_state.ai_scan_results
     
-    # Lọc ra các mã có tín hiệu BUY để làm nổi bật
+    # Cơ hội BUY
     buy_list = df_ai_scan[df_ai_scan['Tín hiệu'] == 2]['Mã'].tolist()
     if buy_list:
         st.success(f"🔥 **Cơ hội tiềm năng (BUY):** {', '.join(buy_list)}")
     else:
         st.info("💡 Chưa tìm thấy cơ hội mua mạnh trong VN30 hiện tại theo mô hình AI.")
+    
+    # Top mã có khả năng lợi nhuận cao (đã sắp xếp theo Lợi nhuận dự báo giảm dần)
+    top5 = df_ai_scan.head(5)
+    top5_str = ", ".join([f"{r['Mã']} ({r['Lợi nhuận dự báo (%)']})" for _, r in top5.iterrows()])
+    st.info(f"📈 **Top 5 khả năng lợi nhuận cao:** {top5_str}")
+
+    # Chi tiết điều kiện từng mã (expander cho trực quan)
+    with st.expander("📋 **Chi tiết điều kiện đáp ứng theo mã**", expanded=False):
+        for _, row in df_ai_scan.iterrows():
+            cond = row.get('Điều kiện đáp ứng', '')
+            if pd.isna(cond) or not str(cond).strip():
+                continue
+            sig_label = "🟢" if row['Tín hiệu'] == 2 else ("🔴" if row['Tín hiệu'] == 0 else "🟡")
+            st.markdown(f"**{sig_label} {row['Mã']}** — {row['Dự báo AI']} | LN dự báo: {row['Lợi nhuận dự báo (%)']}")
+            for line in str(cond).strip().split("\n"):
+                st.markdown(f"- {line}")
+            st.markdown("---")
 
     def style_ai_scanner(row):
         cols = [''] * len(row)
@@ -982,7 +1105,10 @@ if st.session_state.ai_scan_results is not None:
     st.dataframe(
         df_ai_scan.style.apply(style_ai_scanner, axis=1).hide(subset=['Tín hiệu'], axis='columns'),
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        column_config={
+            "Điều kiện đáp ứng": st.column_config.TextColumn("Điều kiện đáp ứng", width="large", help="Các điều kiện cổ phiếu đáp ứng")
+        }
     )
 
 
