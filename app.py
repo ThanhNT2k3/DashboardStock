@@ -198,6 +198,10 @@ with st.sidebar:
         bt_overbought = st.number_input("Overbought", value=80, max_value=100)
         
     bt_run = st.button("🚀 Chạy Backtest", use_container_width=True)
+    
+    st.markdown("---")
+    st.markdown("### 🔍 VN30 Stochastic Scanner")
+    scanner_run = st.button("📊 Quét tín hiệu VN30", use_container_width=True)
 
     st.markdown("---")
     ticker_list = tk.get_tickers(exchange)
@@ -325,6 +329,64 @@ if bt_run:
                 st.error(f"❌ Không tìm thấy dữ liệu cho mã {bt_ticker}")
         except Exception as e:
             st.error(f"❌ Lỗi backtest: {e}")
+
+
+# ─────────────────────────────────────────────
+# Trigger Scanner (VN30 Batch)
+# ─────────────────────────────────────────────
+if 'scanner_results' not in st.session_state:
+    st.session_state.scanner_results = None
+
+if scanner_run:
+    with st.spinner("🔍 Đang quét tín hiệu Stochastic cho rổ VN30..."):
+        try:
+            vn30_list = tk.VN30
+            # Tải dữ liệu 200 ngày để Stoch chuẩn
+            scanner_start = (date.today() - timedelta(days=200)).strftime('%Y-%m-%d')
+            raw_scan = fetcher.batch_fetch(vn30_list, scanner_start, date.today().strftime('%Y-%m-%d'))
+            dict_scan = fetcher.parse_results(raw_scan)
+            
+            scan_rows = []
+            for ticker in vn30_list:
+                if ticker in dict_scan:
+                    t_data = dict_scan[ticker]
+                    df_t = pd.DataFrame({
+                        'close': t_data['close'],
+                        'high': t_data['high'],
+                        'low': t_data['low']
+                    }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
+                    
+                    # 1. Chạy Backtest lịch sử
+                    bt = calculator.run_backtest_stochastic(df_t)
+                    
+                    # 2. Lấy trạng thái hiện tại
+                    df_stoch = calculator.compute_stochastic(df_t)
+                    if not df_stoch.empty:
+                        last_k = df_stoch.iloc[-1]['%K']
+                        last_d = df_stoch.iloc[-1]['%D']
+                        prev_k = df_stoch.iloc[-2]['%K']
+                        prev_d = df_stoch.iloc[-2]['%D']
+                        
+                        signal = "Neutral"
+                        if prev_k <= prev_d and last_k > last_d:
+                            signal = "BUY (Cross Up)" if last_k < 30 else "Potential Up"
+                        elif prev_k >= prev_d and last_k < last_d:
+                            signal = "SELL (Cross Down)" if last_k > 70 else "Potential Down"
+                        
+                        scan_rows.append({
+                            'Mã': ticker,
+                            'Giá hiện tại': f"{t_data['close'][-1]:,.2f}",
+                            '%K': round(last_k, 1),
+                            '%D': round(last_d, 1),
+                            'Tín hiệu hiện tại': signal,
+                            'Win Rate': f"{bt.get('win_rate', 0)}%",
+                            'Total Return': f"{bt.get('total_return', 0)}%",
+                            'Số lệnh': bt.get('total_trades', 0)
+                        })
+            
+            st.session_state.scanner_results = pd.DataFrame(scan_rows)
+        except Exception as e:
+            st.error(f"❌ Lỗi quét VN30: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -683,6 +745,34 @@ if 'bt_results' in st.session_state and st.session_state.bt_results:
             df_trades = pd.DataFrame(res['trades'])
             df_trades['pnl'] = (df_trades['pnl'] * 100).map("{:.2f}%".format)
             st.dataframe(df_trades, use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════
+# ROW 9: Scanner Results
+# ══════════════════════════════════════════════
+if st.session_state.scanner_results is not None:
+    st.markdown('<div class="section-header">VN30 STOCHASTIC SCANNER & PERFORMANCE SUMMARY</div>', unsafe_allow_html=True)
+    df_scan = st.session_state.scanner_results
+    
+    def style_scanner(row):
+        cols = [''] * len(row)
+        sig_idx = row.index.get_loc('Tín hiệu hiện tại')
+        wr_idx = row.index.get_loc('Win Rate')
+        
+        if "BUY" in str(row['Tín hiệu hiện tại']): cols[sig_idx] = 'background-color: rgba(0, 230, 118, 0.2); color: #00E676; font-weight: bold'
+        elif "SELL" in str(row['Tín hiệu hiện tại']): cols[sig_idx] = 'background-color: rgba(255, 23, 68, 0.2); color: #FF1744; font-weight: bold'
+        
+        wr_val = float(str(row['Win Rate']).replace('%', ''))
+        if wr_val > 60: cols[wr_idx] = 'color: #00E676; font-weight: bold'
+        elif wr_val < 40: cols[wr_idx] = 'color: #FF1744'
+        
+        return cols
+
+    st.dataframe(
+        df_scan.style.apply(style_scanner, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
 
 
 # ══════════════════════════════════════════════
