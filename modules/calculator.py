@@ -580,3 +580,94 @@ def compute_mcclellan(ad_df: pd.DataFrame) -> pd.DataFrame:
     df['oscillator']  = df['ema19'] - df['ema39']
     df['summation']   = df['oscillator'].cumsum()
     return df
+
+
+def compute_stochastic(df: pd.DataFrame, k_period: int = 14, d_period: int = 3, slowing: int = 3) -> pd.DataFrame:
+    """Tính Stochastic Oscillator (%K, %D)"""
+    if df.empty or len(df) < k_period:
+        return pd.DataFrame()
+    
+    # Đảm bảo index là datetime nếu chưa có
+    low_min = df['low'].rolling(window=k_period).min()
+    high_max = df['high'].rolling(window=k_period).max()
+    
+    # %K raw
+    df['k_raw'] = 100 * ((df['close'] - low_min) / (high_max - low_min).replace(0, 0.001))
+    # %K slowed (SMA)
+    df['%K'] = df['k_raw'].rolling(window=slowing).mean()
+    # %D (SMA of %K)
+    df['%D'] = df['%K'].rolling(window=d_period).mean()
+    
+    return df.drop(columns=['k_raw'])
+
+
+def run_backtest_stochastic(
+    data: pd.DataFrame, 
+    k_period: int = 14, 
+    d_period: int = 3, 
+    oversold: int = 20, 
+    overbought: int = 80
+) -> dict:
+    """
+    Backtest chiến thuật Stochastic Crossover
+    Buy: %K cắt LÊN %D và %K < oversold
+    Sell: %K cắt XUỐNG %D và %K > overbought
+    """
+    if data.empty: return {}
+    
+    df = compute_stochastic(data.copy(), k_period, d_period)
+    if '%D' not in df.columns: return {}
+
+    df = df.dropna(subset=['%K', '%D'])
+    
+    trades = []
+    position = None # None, 'long'
+    entry_price = 0
+    entry_date = None
+    
+    for i in range(1, len(df)):
+        current_k = df.iloc[i]['%K']
+        current_d = df.iloc[i]['%D']
+        prev_k = df.iloc[i-1]['%K']
+        prev_d = df.iloc[i-1]['%D']
+        price = df.iloc[i]['close']
+        date = df.iloc[i].name
+        
+        # Tín hiệu Crossover
+        cross_up = prev_k <= prev_d and current_k > current_d
+        cross_down = prev_k >= prev_d and current_k < current_d
+        
+        # BUY Logic
+        if position is None and cross_up and current_k < oversold:
+            position = 'long'
+            entry_price = price
+            entry_date = date
+            
+        # SELL Logic
+        elif position == 'long' and cross_down and current_k > overbought:
+            pnl = (price - entry_price) / entry_price
+            trades.append({
+                'entry_date': entry_date,
+                'exit_date': date,
+                'entry_price': entry_price,
+                'exit_price': price,
+                'pnl': pnl,
+                'status': 'Win' if pnl > 0 else 'Loss'
+            })
+            position = None
+
+    if not trades:
+        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': "Không có lệnh nào được thực hiện"}
+
+    # Tính toán performance
+    df_trades = pd.DataFrame(trades)
+    total_return = (1 + df_trades['pnl']).prod() - 1
+    win_rate = (df_trades['pnl'] > 0).mean() * 100
+    
+    return {
+        'total_return': round(total_return * 100, 2),
+        'win_rate': round(win_rate, 2),
+        'total_trades': len(trades),
+        'trades': trades,
+        'equity_curve': (1 + df_trades['pnl']).cumprod()
+    }

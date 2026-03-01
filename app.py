@@ -186,6 +186,20 @@ with st.sidebar:
     run_btn = st.button("🔄 Tải dữ liệu", use_container_width=True, type="primary")
 
     st.markdown("---")
+    st.markdown("### 🧪 Backtest Stochastic")
+    bt_ticker = st.text_input("Mã cổ phiếu", value="SSI", help="Nhập mã CP để chạy backtest tín hiệu Stochastic")
+    
+    col_bt1, col_bt2 = st.columns(2)
+    with col_bt1:
+        bt_k = st.number_input("%K Period", value=14, min_value=1)
+        bt_oversold = st.number_input("Oversold", value=20, min_value=1)
+    with col_bt2:
+        bt_d = st.number_input("%D Period", value=3, min_value=1)
+        bt_overbought = st.number_input("Overbought", value=80, max_value=100)
+        
+    bt_run = st.button("🚀 Chạy Backtest", use_container_width=True)
+
+    st.markdown("---")
     ticker_list = tk.get_tickers(exchange)
     st.markdown(f"""
     <div class="info-box">
@@ -278,6 +292,39 @@ if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
 if 'stats' not in st.session_state:
     st.session_state.stats = None
+if 'bt_results' not in st.session_state:
+    st.session_state.bt_results = None
+if 'bt_target' not in st.session_state:
+    st.session_state.bt_target = ""
+
+
+# ─────────────────────────────────────────────
+# Trigger Backtest (Independent)
+# ─────────────────────────────────────────────
+if bt_run:
+    with st.spinner(f"🧪 Đang backtest mã {bt_ticker}..."):
+        try:
+            # Tải dữ liệu riêng cho ticker này (start_date lùi xa hơn để có dữ liệu SMA/Stoch chuẩn)
+            bt_start = (start_date - timedelta(days=200)).strftime('%Y-%m-%d')
+            raw_bt = fetcher.batch_fetch([bt_ticker], bt_start, end_date.strftime('%Y-%m-%d'))
+            dict_bt = fetcher.parse_results(raw_bt)
+            
+            if bt_ticker in dict_bt:
+                t_data = dict_bt[bt_ticker]
+                df_bt = pd.DataFrame({
+                    'close': t_data['close'],
+                    'high': t_data['high'],
+                    'low': t_data['low'],
+                    'volume': t_data['volume']
+                }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
+                
+                results = calculator.run_backtest_stochastic(df_bt, bt_k, bt_d, bt_oversold, bt_overbought)
+                st.session_state.bt_results = results
+                st.session_state.bt_target = bt_ticker
+            else:
+                st.error(f"❌ Không tìm thấy dữ liệu cho mã {bt_ticker}")
+        except Exception as e:
+            st.error(f"❌ Lỗi backtest: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -588,6 +635,54 @@ with col_mc:
 with col_radar:
     fig_radar = charts.sentiment_components_chart(sentiment['components'])
     st.plotly_chart(fig_radar, use_container_width=True)
+
+
+# ══════════════════════════════════════════════
+# ROW 8: Backtest Results (If triggered)
+# ══════════════════════════════════════════════
+if 'bt_results' in st.session_state and st.session_state.bt_results:
+    st.markdown('<div class="section-header">SIGNAL BACKTEST RESULTS: STOCHASTIC CROSSOVER</div>', unsafe_allow_html=True)
+    res = st.session_state.bt_results
+    ticker_name = st.session_state.bt_target
+    
+    # 1. Overview Metrics
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("Total Return", f"{res['total_return']}%", delta=None)
+    with m2:
+        st.metric("Win Rate", f"{res['win_rate']}%", delta=None)
+    with m3:
+        st.metric("Total Trades", res['total_trades'])
+    with m4:
+        st.metric("Asset", ticker_name)
+        
+    # 2. Charts
+    tab_equity, tab_signals = st.tabs(["📈 Equity Curve", "📉 Stochastic Signal"])
+    
+    with tab_equity:
+        fig_equity = charts.backtest_equity_chart(res)
+        st.plotly_chart(fig_equity, use_container_width=True)
+        
+    with tab_signals:
+        # Lấy dữ liệu raw của ticker để vẽ signal
+        t_data = s['prices_raw'].get(ticker_name, {})
+        if t_data:
+            # Reconstruct DataFrame for chart
+            df_t = pd.DataFrame({
+                'close': t_data['close'],
+                'high': t_data['high'],
+                'low': t_data['low']
+            }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
+            df_stoch = calculator.compute_stochastic(df_t)
+            fig_stoch = charts.stochastic_chart(df_stoch, ticker_name)
+            st.plotly_chart(fig_stoch, use_container_width=True)
+    
+    # 3. Trade List
+    if res['trades']:
+        with st.expander("📜 Chi tiết lịch sử lệnh"):
+            df_trades = pd.DataFrame(res['trades'])
+            df_trades['pnl'] = (df_trades['pnl'] * 100).map("{:.2f}%".format)
+            st.dataframe(df_trades, use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════

@@ -668,3 +668,79 @@ def breadth_thrust_chart(ad_df: pd.DataFrame) -> go.Figure:
         showlegend=False,
     )
     return fig
+
+
+# ─────────────────────────────────────────────
+# 11. Backtest Visualizations
+# ─────────────────────────────────────────────
+
+def backtest_equity_chart(backtest_results: dict) -> go.Figure:
+    """Biểu đồ Equity Curve của chiến thuật backtest"""
+    if not backtest_results or not backtest_results.get('trades'):
+        fig = go.Figure()
+        fig.update_layout(BASE_LAYOUT, title='Backtest Results (không có lệnh)')
+        return fig
+
+    trades = backtest_results['trades']
+    pnl_series = [t['pnl'] * 100 for t in trades]
+    cumulative_pnl = np.cumsum(pnl_series)
+    
+    trade_labels = [f"Trade {i+1}" for i in range(len(trades))]
+
+    fig = go.Figure()
+    
+    # Cumulative PNL line
+    fig.add_trace(go.Scatter(
+        x=trade_labels, y=cumulative_pnl,
+        mode='lines+markers',
+        name='Cum. PNL (%)',
+        line=dict(color=COLORS['accent'], width=3),
+        marker=dict(size=8, color=[COLORS['advance'] if p > 0 else COLORS['decline'] for p in pnl_series]),
+        hovertemplate='%{x}<br>Tổng lãi lỗ: %{y:.2f}%<extra></extra>'
+    ))
+
+    fig.update_layout(
+        BASE_LAYOUT,
+        title=dict(text='CUMULATIVE PERFORMANCE (TRADE-BY-TRADE)', font=dict(size=14)),
+        height=350,
+        xaxis=dict(title='Trades', gridcolor=COLORS['grid']),
+        yaxis=dict(title='PNL (%)', gridcolor=COLORS['grid']),
+        showlegend=False,
+    )
+    return fig
+
+
+def stochastic_chart(df: pd.DataFrame, ticker: str = "") -> go.Figure:
+    """Biểu đồ Stochastic Oscillator (%K, %D)"""
+    if df.empty or '%D' not in df.columns:
+        return go.Figure()
+
+    fig = go.Figure()
+    
+    df_plot = df.dropna(subset=['%K', '%D'])
+    
+    fig.add_trace(go.Scatter(
+        x=df_plot.index, y=df_plot['%K'],
+        name='%K', line=dict(color='#00E676', width=2),
+        hovertemplate='%{x}<br>%K: %{y:.1f}<extra></extra>'
+    ))
+    fig.add_trace(go.Scatter(
+        x=df_plot.index, y=df_plot['%D'],
+        name='%D', line=dict(color='#FFD60A', width=2),
+        hovertemplate='%{x}<br>%D: %{y:.1f}<extra></extra>'
+    ))
+
+    # Overbought/Oversold levels
+    fig.add_hline(y=80, line_dash='dash', line_color='#FF1744', opacity=0.5)
+    fig.add_hline(y=20, line_dash='dash', line_color='#00E676', opacity=0.5)
+
+    fig.update_layout(
+        BASE_LAYOUT,
+        title=dict(text=f'Stochastic Oscillator - {ticker}', font=dict(size=14)),
+        height=250,
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(showgrid=True, gridcolor=COLORS['grid'], rangeslider=dict(visible=False)),
+        yaxis=dict(range=[0, 100], showgrid=True, gridcolor=COLORS['grid']),
+        legend=dict(orientation='h', x=0.5, xanchor='center', y=1.2, font=dict(color=COLORS['text'])),
+    )
+    return fig
