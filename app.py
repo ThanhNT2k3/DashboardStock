@@ -372,15 +372,29 @@ if scanner_run:
                             signal = "BUY (Cross Up)" if last_k < 30 else "Potential Up"
                         elif prev_k >= prev_d and last_k < last_d:
                             signal = "SELL (Cross Down)" if last_k > 70 else "Potential Down"
+
+                        wr_val = float(bt.get('win_rate', 0))
+                        total_ret_val = float(bt.get('total_return', 0))
                         
+                        recommendation = "Nắm giữ"
+                        if signal == "BUY (Cross Up)":
+                            recommendation = "MUA MẠNH 🔥" if wr_val > 55 else "MUA ✅"
+                        elif signal == "SELL (Cross Down)":
+                            recommendation = "BÁN MẠNH ⚠️" if wr_val > 55 else "BÁN 🔻"
+                        elif signal == "Potential Up":
+                            recommendation = "Theo dõi MUA 👀"
+                        elif signal == "Potential Down":
+                            recommendation = "Theo dõi BÁN 📉"
+
                         scan_rows.append({
                             'Mã': ticker,
                             'Giá hiện tại': f"{t_data['close'][-1]:,.2f}",
                             '%K': round(last_k, 1),
                             '%D': round(last_d, 1),
                             'Tín hiệu hiện tại': signal,
-                            'Win Rate': f"{bt.get('win_rate', 0)}%",
-                            'Total Return': f"{bt.get('total_return', 0)}%",
+                            'Khuyến nghị': recommendation,
+                            'Win Rate': f"{wr_val}%",
+                            'Total Return': f"{total_ret_val}%",
                             'Số lệnh': bt.get('total_trades', 0)
                         })
             
@@ -758,13 +772,23 @@ if st.session_state.scanner_results is not None:
         cols = [''] * len(row)
         sig_idx = row.index.get_loc('Tín hiệu hiện tại')
         wr_idx = row.index.get_loc('Win Rate')
+        rec_idx = row.index.get_loc('Khuyến nghị')
         
-        if "BUY" in str(row['Tín hiệu hiện tại']): cols[sig_idx] = 'background-color: rgba(0, 230, 118, 0.2); color: #00E676; font-weight: bold'
-        elif "SELL" in str(row['Tín hiệu hiện tại']): cols[sig_idx] = 'background-color: rgba(255, 23, 68, 0.2); color: #FF1744; font-weight: bold'
+        # Color for Signal
+        if "BUY" in str(row['Tín hiệu hiện tại']): cols[sig_idx] = 'color: #00E676; font-weight: bold'
+        elif "SELL" in str(row['Tín hiệu hiện tại']): cols[sig_idx] = 'color: #FF1744; font-weight: bold'
+        
+        # Color for Recommendation
+        rec = str(row['Khuyến nghị'])
+        if "MUA MẠNH" in rec: cols[rec_idx] = 'background-color: rgba(0, 230, 118, 0.4); color: white; font-weight: bold'
+        elif "MUA" in rec: cols[rec_idx] = 'background-color: rgba(0, 230, 118, 0.15); color: #00E676'
+        elif "BÁN MẠNH" in rec: cols[rec_idx] = 'background-color: rgba(255, 23, 68, 0.4); color: white; font-weight: bold'
+        elif "BÁN" in rec: cols[rec_idx] = 'background-color: rgba(255, 23, 68, 0.15); color: #FF1744'
+        elif "Theo dõi" in rec: cols[rec_idx] = 'color: #FFD740; font-style: italic'
         
         wr_val = float(str(row['Win Rate']).replace('%', ''))
         if wr_val > 60: cols[wr_idx] = 'color: #00E676; font-weight: bold'
-        elif wr_val < 40: cols[wr_idx] = 'color: #FF1744'
+        elif wr_val < 45: cols[wr_idx] = 'color: #FF1744'
         
         return cols
 
