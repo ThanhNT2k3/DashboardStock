@@ -204,6 +204,13 @@ with st.sidebar:
     scanner_run = st.button("📊 Quét tín hiệu VN30", use_container_width=True)
 
     st.markdown("---")
+    st.markdown("### 🧠 AI Multi-Factor Backtest")
+    ai_ticker = st.text_input("Mã CP (AI)", value="SSI", key="ai_ticker_input", help="Phân tích mã CP kết hợp Vàng, Dầu, Lãi suất, Khối ngoại")
+    ai_split = st.slider("Train/Test Split", 0.5, 0.9, 0.7, 0.1)
+    ai_run = st.button("🤖 Chạy AI Backtest", use_container_width=True)
+    ai_scanner_run = st.button("🔍 Quét AI VN30", use_container_width=True, help="Quét toàn bộ rổ VN30 bằng mô hình AI đa nhân tố")
+
+    st.markdown("---")
     ticker_list = tk.get_tickers(exchange)
     st.markdown(f"""
     <div class="info-box">
@@ -401,6 +408,116 @@ if scanner_run:
             st.session_state.scanner_results = pd.DataFrame(scan_rows)
         except Exception as e:
             st.error(f"❌ Lỗi quét VN30: {e}")
+
+
+# ─────────────────────────────────────────────
+# Trigger AI Backtest
+# ─────────────────────────────────────────────
+if 'ai_results' not in st.session_state:
+    st.session_state.ai_results = None
+
+if 'ai_run' in locals() and ai_run:
+    with st.spinner(f"🤖 Đang huấn luyện AI cho {ai_ticker}..."):
+        try:
+            # Tải dữ liệu lịch sử dài (cần ít nhất 2 năm để model AI học tốt)
+            ai_start = (date.today() - timedelta(days=730)).strftime('%Y-%m-%d')
+            ai_end_s = end_date.strftime('%Y-%m-%d')
+            
+            raw_ai = fetcher.batch_fetch([ai_ticker], ai_start, ai_end_s)
+            dict_ai = fetcher.parse_results(raw_ai)
+            
+            if ai_ticker in dict_ai:
+                t_data = dict_ai[ai_ticker]
+                df_ticker_raw = pd.DataFrame({
+                    'close': t_data['close'],
+                    'open': t_data['open'],
+                    'high': t_data['high'],
+                    'low': t_data['low'],
+                    'volume': t_data['volume']
+                }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
+                
+                # Chạy AI Backtest
+                ai_res = calculator.run_backtest_ai(ai_ticker, df_ticker_raw, ai_start, ai_end_s, ai_split)
+                st.session_state.ai_results = ai_res
+                st.session_state.ai_target = ai_ticker
+            else:
+                st.error(f"❌ Không tìm thấy dữ liệu cho mã {ai_ticker}")
+        except Exception as e:
+            st.error(f"❌ Lỗi AI Engine: {e}")
+
+
+# ─────────────────────────────────────────────
+# Trigger AI Scanner (VN30)
+# ─────────────────────────────────────────────
+if 'ai_scan_results' not in st.session_state:
+    st.session_state.ai_scan_results = None
+
+if 'ai_scanner_run' in locals() and ai_scanner_run:
+    with st.spinner("🤖 Đang quét rổ VN30 bằng AI (kỹ thuật + vĩ mô + khối ngoại)..."):
+        try:
+            vn30_list = tk.VN30
+            ai_start = (date.today() - timedelta(days=730)).strftime('%Y-%m-%d')
+            ai_end_s = end_date.strftime('%Y-%m-%d')
+            
+            # Tải dữ liệu toàn bộ VN30
+            raw_ai_scan = fetcher.batch_fetch(vn30_list, ai_start, ai_end_s)
+            dict_ai_scan = fetcher.parse_results(raw_ai_scan)
+            
+            # Tải dữ liệu vĩ mô chung một lần để tối ưu
+            from modules.ai_engine import AIEngine
+            engine = AIEngine()
+            macro_df = engine.fetch_macro_data(ai_start, ai_end_s)
+            
+            ai_scan_rows = []
+            for ticker in vn30_list:
+                if ticker in dict_ai_scan:
+                    t_data = dict_ai_scan[ticker]
+                    df_t = pd.DataFrame({
+                        'close': t_data['close'],
+                        'open': t_data['open'],
+                        'high': t_data['high'],
+                        'low': t_data['low'],
+                        'volume': t_data['volume']
+                    }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
+                    
+                    # Chạy phân tích AI cho mã này
+                    foreign_df = engine.fetch_foreign_flow(ticker, ai_start, ai_end_s)
+                    full_df = engine.prepare_features(df_t, macro_df, foreign_df)
+                    
+                    if not full_df.empty:
+                        # Train mô hình nhanh cho mã này
+                        engine.train(full_df)
+                        signal = engine.predict(full_df)
+                        
+                        # Metadata cho hiển thị
+                        last_close = t_data['close'][-1]
+                        change = t_data['change_pct']
+                        
+                        # Lấy dự báo lợi nhuận từ dòng cuối cùng của full_df
+                        # Chú ý: TARGET_RET là 5-day forward return
+                        # Vì chúng ta predict signal cho phiên cuối, nên ta xem xét xác suất/giá trị kỳ vọng
+                        pred_ret = full_df['TARGET_RET'].iloc[-1] * 100
+                        
+                        label = "BUY 🚀" if signal == 2 else ("SELL ⚠️" if signal == 0 else "HOLD ⏳")
+                        
+                        # Giá mua khuyến nghị (ví dụ: thấp hơn giá hiện tại 0.5% để tối ưu)
+                        buy_price = last_close * 0.995 if signal == 2 else None
+                        
+                        ai_scan_rows.append({
+                            'Mã': ticker,
+                            'Giá hiện tại': f"{last_close:,.2f}",
+                            '% Thay đổi': f"{change}%",
+                            'Dự báo AI': label,
+                            'Giá mua': f"{buy_price:,.2f}" if buy_price else "-",
+                            'Lợi nhuận dự báo (%)': f"{pred_ret:+.2f}%",
+                            'Tín hiệu': signal
+                        })
+            
+            # Tạo DataFrame với cột mặc định để tránh KeyError nếu rỗng
+            cols = ['Mã', 'Giá hiện tại', '% Thay đổi', 'Dự báo AI', 'Giá mua', 'Lợi nhuận dự báo (%)', 'Tín hiệu']
+            st.session_state.ai_scan_results = pd.DataFrame(ai_scan_rows, columns=cols)
+        except Exception as e:
+            st.error(f"❌ Lỗi quét AI VN30: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -794,6 +911,76 @@ if st.session_state.scanner_results is not None:
 
     st.dataframe(
         df_scan.style.apply(style_scanner, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+# ══════════════════════════════════════════════
+# ROW 10: AI Backtest Results
+# ══════════════════════════════════════════════
+if st.session_state.ai_results:
+    st.markdown('<div class="section-header">🤖 AI MULTI-FACTOR PREDICTION & BACKTEST (XGBOOST)</div>', unsafe_allow_html=True)
+    res_ai = st.session_state.ai_results
+    ai_target = st.session_state.ai_target
+    
+    if 'summary' in res_ai:
+        st.warning(res_ai['summary'])
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric("AI Total Return", f"{res_ai['total_return']}%")
+        with m2:
+            st.metric("Win Rate", f"{res_ai['win_rate']}%")
+        with m3:
+            st.metric("Total Trades", res_ai['total_trades'])
+        with m4:
+            st.metric("Asset", ai_target)
+            
+        st.info(f"💡 {res_ai.get('train_info', '')}")
+        
+        tab_ai_eq, tab_ai_trades = st.tabs(["📈 Equity Curve", "📜 Trade List"])
+        
+        with tab_ai_eq:
+            fig_ai_eq = charts.backtest_equity_chart(res_ai, title=f"AI Backtest Equity: {ai_target}")
+            st.plotly_chart(fig_ai_eq, use_container_width=True)
+            
+        with tab_ai_trades:
+            if res_ai['trades']:
+                df_ai_trades = pd.DataFrame(res_ai['trades'])
+                df_ai_trades['pnl'] = (df_ai_trades['pnl'] * 100).map("{:.2f}%".format)
+                st.dataframe(df_ai_trades, use_container_width=True, hide_index=True)
+
+# ══════════════════════════════════════════════
+# ROW 11: AI Scanner Results
+# ══════════════════════════════════════════════
+if st.session_state.ai_scan_results is not None:
+    st.markdown('<div class="section-header">🤖 AI VN30 OPPORTUNITY SCANNER (MULTI-FACTOR)</div>', unsafe_allow_html=True)
+    df_ai_scan = st.session_state.ai_scan_results
+    
+    # Lọc ra các mã có tín hiệu BUY để làm nổi bật
+    buy_list = df_ai_scan[df_ai_scan['Tín hiệu'] == 2]['Mã'].tolist()
+    if buy_list:
+        st.success(f"🔥 **Cơ hội tiềm năng (BUY):** {', '.join(buy_list)}")
+    else:
+        st.info("💡 Chưa tìm thấy cơ hội mua mạnh trong VN30 hiện tại theo mô hình AI.")
+
+    def style_ai_scanner(row):
+        cols = [''] * len(row)
+        sig_idx = row.index.get_loc('Dự báo AI')
+        ret_idx = row.index.get_loc('Lợi nhuận dự báo (%)')
+        
+        if row['Tín hiệu'] == 2: 
+            cols[sig_idx] = 'background-color: rgba(0, 230, 118, 0.4); color: white; font-weight: bold'
+            cols[ret_idx] = 'color: #00E676; font-weight: bold'
+        elif row['Tín hiệu'] == 0: 
+            cols[sig_idx] = 'background-color: rgba(255, 23, 68, 0.4); color: white; font-weight: bold'
+            cols[ret_idx] = 'color: #FF1744'
+        
+        return cols
+
+    st.dataframe(
+        df_ai_scan.style.apply(style_ai_scanner, axis=1).hide(subset=['Tín hiệu'], axis='columns'),
         use_container_width=True,
         hide_index=True
     )

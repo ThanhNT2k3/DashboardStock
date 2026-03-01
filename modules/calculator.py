@@ -5,7 +5,12 @@ Tính toán các chỉ số phân tích độ rộng thị trường
 
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+# Import AIEngine for AI backtesting
+try:
+    from modules.ai_engine import AIEngine
+except ImportError:
+    AIEngine = None
 
 
 # ─────────────────────────────────────────────
@@ -670,4 +675,92 @@ def run_backtest_stochastic(
         'total_trades': len(trades),
         'trades': trades,
         'equity_curve': (1 + df_trades['pnl']).cumprod()
+    }
+
+
+def run_backtest_ai(
+    ticker: str,
+    ticker_df: pd.DataFrame,
+    start_date: str,
+    end_date: str,
+    train_split: float = 0.7
+) -> dict:
+    """
+    Backtest chiến thuật dựa trên mô hình AI (Multi-Factor)
+    1. Huấn luyện mô hình trên `train_split` đầu tiên của dữ liệu.
+    2. Dự báo trên phần còn lại.
+    3. Mô phỏng mua/bán.
+    """
+    if AIEngine is None or ticker_df.empty:
+        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': "Thiếu mô đun AI hoặc dữ liệu"}
+
+    engine = AIEngine()
+    
+    # 1. Thu thập dữ liệu bổ sung (Macro, Foreign)
+    macro_df = engine.fetch_macro_data(start_date, end_date)
+    foreign_df = engine.fetch_foreign_flow(ticker, start_date, end_date)
+    
+    # 2. Xây dựng bộ Feature đầy đủ
+    full_df = engine.prepare_features(ticker_df, macro_df, foreign_df)
+    if len(full_df) < 50:
+        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': f"Không đủ dữ liệu cho AI (cần >50 phiên, hiện có {len(full_df)})"}
+
+    # 3. Chia tập Train/Test theo thời gian (Tránh data leakage)
+    split_idx = int(len(full_df) * train_split)
+    train_data = full_df.iloc[:split_idx]
+    test_data = full_df.iloc[split_idx:]
+    
+    # 4. Huấn luyện mô hình trên tập Train
+    engine.train(train_data)
+    
+    # 5. Backtest trên tập Test
+    trades = []
+    position = None
+    entry_price = 0
+    entry_date = None
+    
+    # Tên cột feature đầu tiên để lấy date (test_data.index)
+    test_dates = test_data.index
+
+    for i in range(len(test_data)):
+        current_row = test_data.iloc[i:i+1] # Lấy 1 dòng làm DF để giữ feature names
+        pred_signal = engine.predict(current_row) # predict signal: 2: BUY, 1: HOLD, 0: SELL
+        
+        price = current_row['close'].values[0]
+        date = test_dates[i]
+        
+        # BUY Logic: AI báo mua (2) & chưa có lệnh
+        if position is None and pred_signal == 2:
+            position = 'long'
+            entry_price = price
+            entry_date = date
+            
+        # SELL Logic: AI báo bán (0) & đang có lệnh (hoặc tín hiệu HOLD/Neutral sau 10 ngày)
+        elif position == 'long' and (pred_signal == 0 or (date - entry_date).days >= 10):
+            pnl = (price - entry_price) / entry_price
+            trades.append({
+                'entry_date': entry_date,
+                'exit_date': date,
+                'entry_price': entry_price,
+                'exit_price': price,
+                'pnl': pnl,
+                'status': 'Win' if pnl > 0 else 'Loss'
+            })
+            position = None
+
+    if not trades:
+        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': "Hệ thống AI chưa tìm thấy cơ hội giao dịch phù hợp trong giai đoạn này."}
+
+    # Tính performance
+    df_trades = pd.DataFrame(trades)
+    total_return = (1 + df_trades['pnl']).prod() - 1
+    win_rate = (df_trades['pnl'] > 0).mean() * 100
+    
+    return {
+        'total_return': round(total_return * 100, 2),
+        'win_rate': round(win_rate, 2),
+        'total_trades': len(trades),
+        'trades': trades,
+        'equity_curve': (1 + df_trades['pnl']).cumprod(),
+        'train_info': f"Đã huấn luyện trên {len(train_data)} phiên, Test trên {len(test_data)} phiên."
     }

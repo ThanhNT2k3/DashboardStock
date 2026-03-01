@@ -674,11 +674,11 @@ def breadth_thrust_chart(ad_df: pd.DataFrame) -> go.Figure:
 # 11. Backtest Visualizations
 # ─────────────────────────────────────────────
 
-def backtest_equity_chart(backtest_results: dict) -> go.Figure:
+def backtest_equity_chart(backtest_results: dict, title: str = "CUMULATIVE PERFORMANCE (TRADE-BY-TRADE)") -> go.Figure:
     """Biểu đồ Equity Curve của chiến thuật backtest"""
     if not backtest_results or not backtest_results.get('trades'):
         fig = go.Figure()
-        fig.update_layout(BASE_LAYOUT, title='Backtest Results (không có lệnh)')
+        fig.update_layout(BASE_LAYOUT, title=title if title else 'Backtest Results (không có lệnh)')
         return fig
 
     trades = backtest_results['trades']
@@ -701,7 +701,7 @@ def backtest_equity_chart(backtest_results: dict) -> go.Figure:
 
     fig.update_layout(
         BASE_LAYOUT,
-        title=dict(text='CUMULATIVE PERFORMANCE (TRADE-BY-TRADE)', font=dict(size=14)),
+        title=dict(text=title.upper(), font=dict(size=14)),
         height=350,
         xaxis=dict(title='Trades', gridcolor=COLORS['grid']),
         yaxis=dict(title='PNL (%)', gridcolor=COLORS['grid']),
