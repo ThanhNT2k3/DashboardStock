@@ -14,6 +14,13 @@ from typing import Optional
 BASE_URL = "https://histdatafeed.vps.com.vn/tradingview/history"
 AGGRESSIVE_BASE_URL = "https://histdatafeed.vps.com.vn/volumeaggressivetrading"
 VIX_API_URL = "https://litefinance.vn/trading/trading-instruments/chart/?symbol=VIX&period=1440&date_start=24"
+GLOBAL_INDICES_URL = "https://cafef.vn/du-lieu/ajax/mobile/smart/ajaxchisothegioi.ashx"
+GOODS_URL = "https://cafef.vn/du-lieu/ajax/mobile/smart/ajaxhanghoa.ashx?type=1"
+PROP_BUY_URL = "https://cafef.vn/du-lieu/ajax/mobile/smart/ajaxgiaodichtudoanh.ashx?type=BUYVALUE"
+PROP_SELL_URL = "https://cafef.vn/du-lieu/ajax/mobile/smart/ajaxgiaodichtudoanh.ashx?type=SELLVALUE"
+FOREIGN_BUY_URL = "https://cafef.vn/du-lieu/ajax/mobile/smart/ajaxkhoingoai.ashx?type=buy"
+FOREIGN_SELL_URL = "https://cafef.vn/du-lieu/ajax/mobile/smart/ajaxkhoingoai.ashx?type=sell"
+MARKET_VALUATION_URL = "https://cafef.vn/du-lieu/Ajax/PageNew/FinanceData/GetDataChartPE.ashx"
 CONCURRENCY = 20  # max concurrent requests
 TIMEOUT = 15      # seconds per request
 
@@ -288,3 +295,107 @@ def load_market_summary_history(filename: str = "market_summary_history.csv") ->
         return df
     except:
         return pd.DataFrame()
+
+
+def fetch_global_indices() -> pd.DataFrame:
+    """Fetch global indices from CafeF API"""
+    import requests
+    try:
+        r = requests.get(GLOBAL_INDICES_URL, timeout=10)
+        r.raise_for_status()
+        raw = r.json()
+        if raw.get('Success') and 'Data' in raw:
+            df = pd.DataFrame(raw['Data'])
+            # Clean up and rename
+            df = df[['index', 'last', 'change', 'changePercent', 'lastUpdate']]
+            df.columns = ['Index', 'Last', 'Change', '% Change', 'Updated']
+            return df
+    except Exception as e:
+        print(f"Error fetching global indices: {e}")
+    return pd.DataFrame()
+
+
+def fetch_commodities() -> pd.DataFrame:
+    """Fetch commodity prices from CafeF API"""
+    import requests
+    try:
+        r = requests.get(GOODS_URL, timeout=10)
+        r.raise_for_status()
+        raw = r.json()
+        if raw.get('Success') and 'Data' in raw:
+            df = pd.DataFrame(raw['Data'])
+            # Clean up and rename
+            df = df[['goods', 'last', 'change', 'changePercent', 'last_update']]
+            df.columns = ['Commodity', 'Last', 'Change', '% Change', 'Updated']
+            return df
+    except Exception as e:
+        print(f"Error fetching commodities: {e}")
+    return pd.DataFrame()
+
+
+def fetch_org_trading(org_type: int, symbol: str = "VNINDEX", limit: int = 20) -> pd.DataFrame:
+    """
+    Fetch Foreign or Proprietary trading data.
+    org_type: 0 for Foreign, 1 for Proprietary
+    """
+    import requests
+    from datetime import datetime
+    today_str = datetime.now().strftime('%Y%m%d')
+    url = f"https://msh-appdata.cafef.vn/rest-api/api/v1/OverviewOrgnizaztion/{org_type}/{today_str}/{limit}?symbol={symbol}"
+    
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if isinstance(data, list) and len(data) > 0:
+            df = pd.DataFrame(data)
+            # Process date
+            df['date'] = pd.to_datetime(df['date']).dt.strftime('%d/%m')
+            # Convert values to Billion VND
+            df['netVal_bn'] = df['netVal'] / 1e9
+            # Keep only necessary columns for the chart/table
+            return df[['date', 'buyVal', 'sellVal', 'netVal', 'netVal_bn', 'buyVol', 'sellVol', 'netVol']]
+    except Exception as e:
+        print(f"Error fetching org trading (type={org_type}): {e}")
+    return pd.DataFrame()
+
+
+def fetch_top_trading_stocks(url: str) -> pd.DataFrame:
+    """Fetch top stocks from a given CafeF trading API URL"""
+    import requests
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        raw = r.json()
+        if raw.get('Success') and 'Data' in raw:
+            df = pd.DataFrame(raw['Data'])
+            if not df.empty:
+                # Standardize columns
+                df = df[['Symbol', 'Value', 'CurrentPrice', 'ChangePricePercent']]
+                df['Value_bn'] = df['Value'] / 1e9
+                return df
+    except Exception as e:
+        print(f"Error fetching top trading stocks: {e}")
+    return pd.DataFrame()
+
+
+def fetch_market_valuation() -> dict:
+    """Fetch market valuation data (P/E, P/B, Cap) and historical chart data"""
+    import requests
+    try:
+        r = requests.get(MARKET_VALUATION_URL, timeout=10)
+        r.raise_for_status()
+        raw = r.json()
+        if raw.get('Data'):
+            data = raw['Data']
+            # NowDataFinance, PastDataFinance, DataChart
+            if 'DataChart' in data:
+                df = pd.DataFrame(data['DataChart'])
+                # Convert TimeStamp to datetime
+                df['Date'] = pd.to_datetime(df['TimeStamp'], unit='s')
+                df = df.sort_values('Date')
+                data['history_df'] = df
+            return data
+    except Exception as e:
+        print(f"Error fetching market valuation: {e}")
+    return {}

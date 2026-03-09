@@ -1318,6 +1318,157 @@ with tabs[0]:
     except Exception as e:
         st.error(f"VIX Display Error: {e}")
 
+    # ── Global Indices Row ───────────────────────────────────
+    st.markdown('<div class="section-header">GLOBAL MARKET INDICES</div>', unsafe_allow_html=True)
+    try:
+        global_df = fetcher.fetch_global_indices()
+        if not global_df.empty:
+            # Filter
+            all_indices = global_df['Index'].unique().tolist()
+            selected_indices = st.multiselect("Select Indices", options=all_indices, default=all_indices[:10])
+            if selected_indices:
+                global_df = global_df[global_df['Index'].isin(selected_indices)]
+
+            # Ensure numeric
+            for col in ['Last', 'Change', '% Change']:
+                global_df[col] = pd.to_numeric(global_df[col], errors='coerce')
+
+            # Color coding for % Change
+            def color_change(val):
+                try:
+                    v = float(val)
+                    if v > 0: return 'color: #00E676;'
+                    if v < 0: return 'color: #FF1744;'
+                except: pass
+                return ''
+            
+            st.dataframe(
+                global_df.style.format({
+                    'Last': '{:,.2f}',
+                    'Change': '{:+.2f}',
+                    '% Change': '{:+.2f}'
+                }).applymap(color_change, subset=['% Change']),
+                use_container_width=True,
+                height=400,
+                hide_index=True
+            )
+        else:
+            st.warning("Could not fetch Global Indices. Check API connectivity.")
+    except Exception as e:
+        st.error(f"Global Indices Error: {e}")
+
+    # ── Commodities Row ──────────────────────────────────────
+    st.markdown('<div class="section-header">GLOBAL COMMODITY PRICES</div>', unsafe_allow_html=True)
+    try:
+        goods_df = fetcher.fetch_commodities()
+        if not goods_df.empty:
+            # Filter
+            all_goods = goods_df['Commodity'].unique().tolist()
+            selected_goods = st.multiselect("Select Commodities", options=all_goods, default=all_goods[:10])
+            if selected_goods:
+                goods_df = goods_df[goods_df['Commodity'].isin(selected_goods)]
+
+            # Ensure numeric
+            for col in ['Last', 'Change', '% Change']:
+                goods_df[col] = pd.to_numeric(goods_df[col], errors='coerce')
+
+            def color_change_goods(val):
+                try:
+                    v = float(val)
+                    if v > 0: return 'color: #00E676;'
+                    if v < 0: return 'color: #FF1744;'
+                except: pass
+                return ''
+            
+            st.dataframe(
+                goods_df.style.format({
+                    'Last': '{:,.2f}',
+                    'Change': '{:+.2f}',
+                    '% Change': '{:+.2f}'
+                }).applymap(color_change_goods, subset=['% Change']),
+                use_container_width=True,
+                height=400,
+                hide_index=True
+            )
+        else:
+            st.warning("Could not fetch Commodity prices. Check API connectivity.")
+    except Exception as e:
+        st.error(f"Commodities Error: {e}")
+
+    # ── Foreign & Proprietary Flow Row ───────────────────────
+    st.markdown('<div class="section-header">FOREIGN & PROPRIETARY TRADING FLOWS (VNINDEX)</div>', unsafe_allow_html=True)
+    c_foreign, c_prop = st.columns(2)
+    
+    with c_foreign:
+        try:
+            foreign_df = fetcher.fetch_org_trading(0) # 0 for Foreign
+            if not foreign_df.empty:
+                st.plotly_chart(charts.org_trading_chart(foreign_df, "Foreign Net Flow (Billion VND)"), use_container_width=True)
+            else:
+                st.info("Foreign trading data not available for today yet.")
+        except Exception as e:
+            st.error(f"Foreign Flow Error: {e}")
+            
+    with c_prop:
+        try:
+            prop_df = fetcher.fetch_org_trading(1) # 1 for Proprietary
+            if not prop_df.empty:
+                st.plotly_chart(charts.org_trading_chart(prop_df, "Proprietary Net Flow (Billion VND)"), use_container_width=True)
+            else:
+                st.info("Proprietary trading data not available for today yet.")
+        except Exception as e:
+            st.error(f"Proprietary Flow Error: {e}")
+
+    # ── Top Trading Stocks Analysis Row ──────────────────────
+    st.markdown('<div class="section-header">TOP TRADING STOCKS ANALYSIS (CURRENT SESSION)</div>', unsafe_allow_html=True)
+    
+    t_highlights1, t_highlights2 = st.tabs(["Foreign Trading Highlights", "Proprietary Trading Highlights"])
+    
+    with t_highlights1:
+        c_top1, c_top2 = st.columns(2)
+        with c_top1:
+            df_fb = fetcher.fetch_top_trading_stocks(fetcher.FOREIGN_BUY_URL)
+            st.plotly_chart(charts.top_trading_stocks_chart(df_fb, "Foreign: Top Buy Stocks", 'Greens'), use_container_width=True)
+        with c_top2:
+            df_fs = fetcher.fetch_top_trading_stocks(fetcher.FOREIGN_SELL_URL)
+            st.plotly_chart(charts.top_trading_stocks_chart(df_fs, "Foreign: Top Sell Stocks", 'Reds'), use_container_width=True)
+            
+    with t_highlights2:
+        c_top3, c_top4 = st.columns(2)
+        with c_top3:
+            df_pb = fetcher.fetch_top_trading_stocks(fetcher.PROP_BUY_URL)
+            st.plotly_chart(charts.top_trading_stocks_chart(df_pb, "Proprietary: Top Buy Stocks", 'Blues'), use_container_width=True)
+        with c_top4:
+            df_ps = fetcher.fetch_top_trading_stocks(fetcher.PROP_SELL_URL)
+            st.plotly_chart(charts.top_trading_stocks_chart(df_ps, "Proprietary: Top Sell Stocks", 'Oranges'), use_container_width=True)
+
+    # ── Market Valuation Row ─────────────────────────────────
+    st.markdown('<div class="section-header">MARKET VALUATION INDICATORS</div>', unsafe_allow_html=True)
+    try:
+        val_data = fetcher.fetch_market_valuation()
+        if val_data:
+            c_v1, c_v2 = st.columns([1, 2])
+            with c_v1:
+                # Key Metrics from NowDataFinance
+                now = val_data.get('NowDataFinance', {})
+                past = val_data.get('PastDataFinance', {})
+                
+                st.write("**Current Summary:**")
+                sc1, sc2 = st.columns(2)
+                sc1.metric("Market P/E", f"{now.get('PE', 0):.2f}", f"{now.get('PE', 0) - past.get('PE', 0):+.2f}")
+                sc2.metric("Market P/B", f"{now.get('PB', 0):.2f}", f"{now.get('PB', 0) - past.get('PB', 0):+.2f}")
+                
+                st.write(f"**Market Cap:** {now.get('MaketCap', 0)/1e12:,.1f} Trillion VND")
+                st.info("Market valuation reflects the overall overbought/oversold state relative to earnings capability.")
+                
+            with c_v2:
+                if 'history_df' in val_data:
+                    st.plotly_chart(charts.market_valuation_chart(val_data['history_df']), use_container_width=True)
+        else:
+            st.warning("Could not fetch Market Valuation data.")
+    except Exception as e:
+        st.error(f"Valuation Error: {e}")
+
 
 # ─────────────────────────────────────────────
 # TAB 2: PHÂN TÍCH CỔ PHIẾU (SINGLE STOCK)

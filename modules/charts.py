@@ -1097,3 +1097,127 @@ def top_money_flow_chart(df: pd.DataFrame) -> go.Figure:
         margin=dict(l=60, r=40, t=60, b=40)
     )
     return fig
+
+
+# ─────────────────────────────────────────────
+# 19. Foreign & Proprietary Trading Charts
+# ─────────────────────────────────────────────
+
+def org_trading_chart(df: pd.DataFrame, title: str) -> go.Figure:
+    """Biểu đồ lịch sử mua bán ròng của khối ngoại hoặc tự doanh"""
+    if df.empty:
+        return go.Figure().update_layout(title=f"No {title} Data")
+        
+    # Standardize data: sort by date ascending for the chart
+    df = df.copy()
+    # Assuming date is in 'dd/mm' format, it might need better sorting logic if crossing years
+    # But for a daily chart, we just reverse the API response which usually comes newest first
+    df = df.iloc[::-1] 
+
+    fig = go.Figure()
+    
+    # Colors based on net value
+    colors = ['#00E676' if x > 0 else '#FF1744' for x in df['netVal_bn']]
+    
+    fig.add_trace(go.Bar(
+        x=df['date'],
+        y=df['netVal_bn'],
+        marker_color=colors,
+        text=df['netVal_bn'].apply(lambda x: f"{x:+.0f}"),
+        textposition='outside',
+        textfont=dict(size=10, color='white'),
+        name="Net Value (Bn)",
+        hovertemplate="<b>Ngày: %{x}</b><br>Mua ròng: %{y:,.1f} Tỷ<extra></extra>"
+    ))
+    
+    # Optional: Line for cumulative flow or just zero line is enough for bar chart
+    fig.add_hline(y=0, line_color="white", opacity=0.3)
+    
+    fig.update_layout(BASE_LAYOUT)
+    fig.update_layout(
+        title=title,
+        yaxis_title="Net Value (Bn VND)",
+        xaxis_title=None,
+        height=400,
+        margin=dict(l=50, r=20, t=60, b=40),
+        showlegend=False
+    )
+    
+    return fig
+
+
+def top_trading_stocks_chart(df: pd.DataFrame, title: str, color_scale: str = 'Greens') -> go.Figure:
+    """Biểu đồ Top 10 cổ phiếu được mua/bán bởi khối ngoại hoặc tự doanh"""
+    if df.empty:
+        return go.Figure().update_layout(title=f"No {title} Data")
+    
+    # Sort by Value_bn ascending for horizontal bar chart
+    df = df.sort_values('Value_bn', ascending=True)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=df['Symbol'],
+        x=df['Value_bn'],
+        orientation='h',
+        marker=dict(
+            color=df['Value_bn'],
+            colorscale=color_scale,
+            line=dict(color=COLORS['border'], width=1)
+        ),
+        text=df.apply(lambda r: f"{r['Value_bn']:,.1f}B ({r['ChangePricePercent']:+.1f}%)", axis=1),
+        textposition='outside',
+        hovertemplate="<b>%{y}</b><br>Giá trị: %{x:,.1f} Tỷ<br>Biến động: %{customdata}%<extra></extra>",
+        customdata=df['ChangePricePercent']
+    ))
+    
+    fig.update_layout(BASE_LAYOUT)
+    fig.update_layout(
+        title=title,
+        xaxis_title="Value (Billion VND)",
+        yaxis_title=None,
+        height=450,
+        margin=dict(l=60, r=40, t=60, b=40)
+    )
+    return fig
+
+
+def market_valuation_chart(df: pd.DataFrame) -> go.Figure:
+    """Biểu đồ P/E và Index lịch sử của toàn thị trường"""
+    if df.empty:
+        return go.Figure().update_layout(title="No Valuation Data")
+    
+    from plotly.subplots import make_subplots
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Trace 1: PE Ratio
+    fig.add_trace(go.Scatter(
+        x=df['Date'], y=df['Pe'],
+        name="Market P/E",
+        mode='lines',
+        line=dict(color='#00D4FF', width=2.5),
+        fill='tozeroy',
+        fillcolor='rgba(0,212,255,0.1)',
+        hovertemplate="Ngày: %{x}<br>P/E: %{y:.2f}<extra></extra>"
+    ), secondary_y=False)
+    
+    # Trace 2: Index
+    fig.add_trace(go.Scatter(
+        x=df['Date'], y=df['Index'],
+        name="VNINDEX",
+        mode='lines',
+        line=dict(color='#FFD740', width=1.5, dash='dot'),
+        hovertemplate="Ngày: %{x}<br>Index: %{y:,.2f}<extra></extra>"
+    ), secondary_y=True)
+    
+    fig.update_layout(BASE_LAYOUT)
+    fig.update_layout(
+        title="Market Valuation History (P/E vs. Index)",
+        height=500,
+        margin=dict(l=60, r=60, t=60, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
+    fig.update_yaxes(title_text="P/E Ratio", secondary_y=False, gridcolor='rgba(255,255,255,0.1)')
+    fig.update_yaxes(title_text="Index Points", secondary_y=True, gridcolor='rgba(255,255,255,0.05)')
+    
+    return fig
