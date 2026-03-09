@@ -1142,6 +1142,34 @@ with tabs[0]:
     with col_adline:
         st.plotly_chart(charts.ad_line_chart(s['ad_history']), use_container_width=True)
 
+    # ── Market Treemap Heatmap ───────────────────────────────
+    st.markdown('<div class="section-header">MARKET VISUAL HEATMAP (TREEMAP)</div>', unsafe_allow_html=True)
+    with st.expander("🔍 View Market Heatmap (Sizing & Classification)", expanded=True):
+        raw_treemap_df = calculator.compute_market_treemap(s['prices_raw'])
+        
+        if not raw_treemap_df.empty:
+            # 1. Row 1: Filters & Sorting
+            f_col1, f_col2 = st.columns([3, 1])
+            
+            with f_col1:
+                all_sectors = sorted(raw_treemap_df['Sector'].unique().tolist())
+                sel_sectors = st.multiselect("Filter by Sector", options=all_sectors, default=all_sectors)
+            
+            with f_col2:
+                # Sizing method
+                size_method = st.radio("Size Boxes By:", options=["Trading Value", "Volume"], index=0, horizontal=True)
+                size_col = 'Value' if size_method == "Trading Value" else 'Volume'
+            
+            # 2. Apply Filters (Only Sector)
+            filtered_df = raw_treemap_df[raw_treemap_df['Sector'].isin(sel_sectors)]
+            
+            if not filtered_df.empty:
+                st.plotly_chart(charts.market_treemap_chart(filtered_df, size_col=size_col), use_container_width=True)
+            else:
+                st.warning("Please select at least one sector.")
+        else:
+            st.info("No data available to build heatmap. Ensure tickers are loaded.")
+
     # ── Market Breadth Depth Row ─────────────────────────────
     st.markdown('<div class="section-header">MARKET BREADTH DEPTH</div>', unsafe_allow_html=True)
     col_ma_bar, col_hl_bar = st.columns(2)

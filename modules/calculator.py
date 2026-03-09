@@ -18,15 +18,21 @@ except ImportError:
 # ─────────────────────────────────────────────
 
 SECTOR_MAP = {
-    'Banking': ['VCB', 'BID', 'CTG', 'TCB', 'MBB', 'VPB', 'ACB', 'HDB', 'LPB', 'TPB', 'MSB', 'STB', 'OCB', 'VIB', 'SSB', 'NAB', 'EIB'],
-    'Real Estate': ['VIC', 'VHM', 'VRE', 'NVL', 'PDR', 'DIG', 'DXG', 'NLG', 'KBC', 'KDH', 'HDC', 'CEO', 'L14', 'IDC', 'SZC', 'VGC'],
-    'Financial Services': ['SSI', 'VND', 'VCI', 'HCM', 'SHS', 'FTS', 'BSI', 'ORS', 'VIX', 'CTS', 'AGR', 'MBS', 'VDS'],
-    'Steel': ['HPG', 'HSG', 'NKG', 'VGS', 'TVN'],
-    'Oil & Gas': ['GAS', 'PVD', 'PVS', 'PVT', 'BSR', 'PLX', 'OIL'],
-    'Industrial Zones': ['IDC', 'KBC', 'SZC', 'VGC', 'LH', 'TIP', 'D2D'],
-    'Public Investment': ['HHV', 'VCG', 'LCG', 'FCN', 'C4G', 'HT1', 'BCC'],
-    'Retail': ['MWG', 'FRT', 'DGW', 'PET', 'MSN', 'PNJ'],
-    'Technology': ['FPT', 'CMG', 'ELC', 'ITD']
+    'Banking': ['VCB', 'BID', 'CTG', 'TCB', 'MBB', 'VPB', 'ACB', 'HDB', 'LPB', 'TPB', 'MSB', 'STB', 'OCB', 'VIB', 'SSB', 'NAB', 'EIB', 'BAB', 'NVB', 'KLB', 'SGB', 'ABB', 'VBB'],
+    'Real Estate': ['VIC', 'VHM', 'VRE', 'NVL', 'PDR', 'DIG', 'DXG', 'NLG', 'KBC', 'KDH', 'HDC', 'CEO', 'L14', 'IDC', 'SZC', 'VGC', 'HTN', 'DXS', 'KHG', 'CRE', 'SCR', 'TCH', 'HQC', 'LDG', 'KOS', 'BCM', 'SJS', 'VPI', 'VPH', 'AGG', 'NBB', 'NRC', 'HDG', 'ITA', 'FLC', 'ROS'],
+    'Securities': ['SSI', 'VND', 'VCI', 'HCM', 'SHS', 'FTS', 'BSI', 'ORS', 'VIX', 'CTS', 'AGR', 'MBS', 'VDS', 'TVS', 'BVS', 'PSI', 'WSS', 'APS', 'EVS', 'FTS', 'BSI', 'TVB', 'TVC'],
+    'Steel & Resources': ['HPG', 'HSG', 'NKG', 'VGS', 'TVN', 'SMC', 'TLH', 'POM', 'TIS', 'VCA', 'KSA', 'KSB', 'DHB'],
+    'Oil & Gas': ['GAS', 'PVD', 'PVS', 'PVT', 'BSR', 'PLX', 'OIL', 'PVC', 'PVB', 'PVG', 'PVH', 'POS', 'PVO', 'PEQ'],
+    'Industrial Zones': ['IDC', 'KBC', 'SZC', 'VGC', 'LH', 'TIP', 'D2D', 'NTC', 'ITA', 'HPI', 'VRG'],
+    'Construction & Materials': ['HHV', 'VCG', 'LCG', 'FCN', 'C4G', 'HT1', 'BCC', 'PC1', 'DHA', 'CTD', 'HBC', 'REZ', 'ACC', 'DAH'],
+    'Retail & E-commerce': ['MWG', 'FRT', 'DGW', 'PET', 'MSN', 'PNJ', 'ABS', 'SVW'],
+    'Technology': ['FPT', 'CMG', 'ELC', 'ITD', 'SAM', 'ONE', 'DST'],
+    'Utilities': ['POW', 'GAS', 'TDM', 'BWE', 'REE', 'NT2', 'PPC', 'GEG', 'VSH', 'SJD', 'TMP', 'HNA', 'VPD', 'GHC', 'AVC', 'TBC', 'SBA'],
+    'Consumer Staples': ['VNM', 'SAB', 'MSN', 'BHN', 'KDC', 'VHC', 'ANV', 'IDI', 'DBC', 'HAG', 'HNG', 'MCH', 'VOC', 'QNS', 'CLX', 'NLS', 'MML', 'VHE'],
+    'Chemicals & Fertilizer': ['DGC', 'DCM', 'DPM', 'CSV', 'LAS', 'BFC', 'DDV', 'DNP', 'PHR', 'DPR', 'TRC', 'GVR'],
+    'Logistics & Transport': ['GMD', 'HAH', 'VSC', 'PVT', 'VNA', 'VTO', 'VIP', 'TCW', 'SGP', 'VND', 'PHP', 'TCL', 'CDN', 'ILB', 'VJC', 'HVN'],
+    'Insurance': ['BVH', 'MIG', 'BMI', 'PGI', 'PTI', 'AIC', 'BIC', 'VNR'],
+    'Health & Pharma': ['DMC', 'DHG', 'TRA', 'IMP', 'DP3', 'DBT', 'AMV', 'JVC'],
 }
 # ─────────────────────────────────────────────
 # Helper
@@ -1240,6 +1246,53 @@ def compute_sector_liquidity(prices_dict: dict, agg_liq_map: dict = {}) -> pd.Da
         })
         
     return pd.DataFrame(sector_data).sort_values('GTGD (Tỷ)', ascending=False)
+
+
+    return pd.DataFrame(sector_data).sort_values('GTGD (Tỷ)', ascending=False)
+
+
+def compute_market_treemap(prices_dict: dict) -> pd.DataFrame:
+    """
+    Chuẩn bị dữ liệu cho Treemap
+    Returns DataFrame: [Ticker, Sector, Value, Change %]
+    """
+    ticker_to_sector = {}
+    for sector, tickers in SECTOR_MAP.items():
+        for t in tickers:
+            ticker_to_sector[t] = sector
+            
+    treemap_data = []
+    for ticker, data in prices_dict.items():
+        if is_index_ticker(ticker):
+            continue
+            
+        closes = data.get('close', [])
+        volumes = data.get('volume', [])
+        
+        if len(closes) < 2:
+            continue
+            
+        last_price = closes[-1]
+        prev_price = closes[-2]
+        change_pct = ((last_price - prev_price) / prev_price * 100) if prev_price else 0
+        
+        # Value (Size) can be (Last Price * Last Volume) or just Last Volume
+        # For treemap usually trading value is better
+        last_vol = volumes[-1] if volumes else 0
+        value = last_price * last_vol
+        
+        sector = ticker_to_sector.get(ticker, "Others")
+        
+        if value > 0: # Only show active ones
+            treemap_data.append({
+                'Ticker': ticker,
+                'Sector': sector,
+                'Value': value,
+                'Volume': last_vol,
+                'Change %': round(change_pct, 2)
+            })
+            
+    return pd.DataFrame(treemap_data)
 
 
 def compute_mfi(df: pd.DataFrame, period: int = 14) -> pd.Series:

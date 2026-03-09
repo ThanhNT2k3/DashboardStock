@@ -1221,3 +1221,66 @@ def market_valuation_chart(df: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(title_text="Index Points", secondary_y=True, gridcolor='rgba(255,255,255,0.05)')
     
     return fig
+
+
+def market_treemap_chart(df: pd.DataFrame, size_col: str = 'Value') -> go.Figure:
+    """
+    Tạo biểu đồ Treemap (Heatmap) thị trường.
+    df columns: ['Ticker', 'Sector', 'Value', 'Volume', 'Change %']
+    """
+    if df.empty:
+        return go.Figure().update_layout(title="No Treemap Data Available", paper_bgcolor='rgba(0,0,0,0)')
+
+    # Sort to ensure layout stability (Plolty handles sizing internally based on values)
+    df = df.sort_values(size_col, ascending=False)
+    
+    import plotly.express as px
+    
+    # We use plotly.express to generate the structure then customize
+    fig = px.treemap(
+        df, 
+        path=[px.Constant("Thị trường"), 'Sector', 'Ticker'], 
+        values=size_col,
+        color='Change %',
+        range_color=[-7, 7],
+        color_continuous_scale=[
+            [0, 'rgb(39, 174, 96)'],
+            [0, 'rgb(255, 0, 0)'],
+            [0.5, 'rgb(255, 255, 0)'],
+            [1, 'rgb(0, 255, 0)']
+        ],
+        hover_data=['Change %', 'Value', 'Volume']
+    )
+    
+    # Add Padding and customize labels
+    fig.update_traces(
+        marker=dict(
+            colorscale=[
+                [0.0, 'rgb(0, 191, 255)'],   # Floor (Cyan)
+                [0.1, 'rgb(255, 0, 0)'],     # Down (Red)
+                [0.5, 'rgb(255, 165, 0)'],   # Ref (Orange/Yellow)
+                [0.9, 'rgb(0, 255, 0)'],     # Up (Green)
+                [1.0, 'rgb(128, 0, 128)']    # Ceiling (Purple)
+            ],
+            cmid=0,
+            showscale=True,
+            pad=dict(b=2, l=2, r=2, t=2), # Padding between boxes
+            line=dict(width=1, color='rgba(0,0,0,0.3)')
+        ),
+        tiling=dict(
+            pad=4, # Padding between parent sectors
+        ),
+        texttemplate="<b>%{label}</b><br>%{customdata[0]:.2f}%",
+        hovertemplate="<b>%{label}</b><br>GTGD: %{customdata[1]:,.0f}<br>KLGD: %{customdata[2]:,.0f}<br>Biến động: %{customdata[0]:.2f}%<extra></extra>"
+    )
+
+    fig.update_layout(
+        margin=dict(t=5, l=5, r=5, b=5),
+        height=700,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color="#E0E0E0", size=14),
+        coloraxis_showscale=False # Remove duplicate scale if any
+    )
+    
+    return fig
