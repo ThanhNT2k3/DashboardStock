@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "skills": {
+    "Business Analyst": {
+      "source": "aj-geddes/claude-code-bmad-skills",
+      "sourceType": "github",
+      "computedHash": "078aae12f77417545c23eb7f372d8f7c3d9fa3017f048f2d4ee081019b49d375"
+    },
+    "data-analyst": {
+      "source": "shubhamsaboo/awesome-llm-apps",
+      "sourceType": "github",
+      "computedHash": "4fd5f18349b1eea7d7026e7d8a5d22b7856477ffb6796de9cdc68e374777a8c2"
+    },
+    "financial-charts": {
+      "source": "pedro-mello30/stock-analyst",
+      "sourceType": "github",
+      "computedHash": "45a0abf4e23d77f3793afed3421125775d08d264901eb75e73bf375bd605602d"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "computedHash": "6412eb4eb3b91595ebab937f0c69501240e7ba761b3d82510b5cf506ec5c7adc"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+    },
+    "polymarket-analyst": {
+      "source": "carlosibcu/polymarket-analyst-skills",
+      "sourceType": "github",
+      "computedHash": "06a3d14c28b8aa58e2714273e2006718b3099728c51a3c98b3c6cf50b667b5db"
+    },
+    "python-backend": {
+      "source": "jiatastic/open-python-skills",
+      "sourceType": "github",
+      "computedHash": "3e05cfe0d22005cd76126b0a7d67e1b33da8a08da99d863133a37abfd47365a0"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "b122f4d1e91aa1d83027e050b5b37c3156203ee85458d7b1360bc48167c9e02a"
+    }
+  }
+}

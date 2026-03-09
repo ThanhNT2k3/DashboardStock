@@ -12,7 +12,10 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from modules import tickers as tk
-from modules import fetcher, calculator, charts
+from modules import fetcher, calculator, charts, notifier, keep_alive
+
+# Start Keep-Alive thread (Stay Awake)
+keep_alive.start_keep_alive()
 
 # ─────────────────────────────────────────────
 # Page Config
@@ -25,84 +28,320 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# Custom CSS
+# Custom CSS — Premium Trading Terminal
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
+    /* ── Base ─────────────────────────────── */
     html, body, [class*="css"] {
-        font-family: 'IBM Plex Sans', sans-serif;
+        font-family: 'DM Sans', sans-serif !important;
     }
-    .main { background-color: #0E1117; }
-    .stApp { background-color: #0E1117; }
+    .main, .stApp {
+        background: #080B12 !important;
+    }
 
-    /* Metric cards */
-    [data-testid="metric-container"] {
-        background-color: #1E2130;
-        border: 1px solid #2A2D3E;
-        border-radius: 8px;
-        padding: 16px;
+    /* ── Sidebar ──────────────────────────── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0D1117 0%, #0A0E18 100%) !important;
+        border-right: 1px solid rgba(0, 180, 216, 0.12) !important;
     }
-    [data-testid="metric-container"] > div { color: #FAFAFA; }
-
-    /* Header */
-    .dashboard-header {
-        background: linear-gradient(135deg, #0E1117 0%, #1E2130 50%, #0E1117 100%);
-        border-bottom: 1px solid #2A2D3E;
-        padding: 1rem 0;
-        margin-bottom: 1.5rem;
-    }
-    .dashboard-title {
-        font-size: 1.8rem;
-        font-weight: 600;
+    [data-testid="stSidebar"] .stMarkdown h3 {
         color: #00B4D8;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+
+    /* ── Tabs ─────────────────────────────── */
+    .stTabs [data-baseweb="tab-list"] {
+        background: rgba(15,18,30,0.9) !important;
+        border-bottom: 1px solid rgba(0,180,216,0.15);
+        padding: 0 8px;
+        gap: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 6px 6px 0 0;
+        padding: 10px 20px;
+        font-weight: 500;
+        font-size: 0.82rem;
+        color: #666 !important;
+        letter-spacing: 0.3px;
+        transition: all 0.2s ease;
+        border: none !important;
+        background: transparent !important;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #00D4FF !important;
+        background: rgba(0,180,216,0.08) !important;
+        border-bottom: 2px solid #00D4FF !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #00D4FF !important;
+        background: rgba(0,180,216,0.05) !important;
+    }
+    .stTabs [data-baseweb="tab-panel"] {
+        background: transparent !important;
+        padding-top: 1rem;
+    }
+
+    /* ── Metric Cards ─────────────────────── */
+    [data-testid="metric-container"] {
+        background: linear-gradient(135deg, #111520 0%, #0F1420 100%);
+        border: 1px solid rgba(42,45,62,0.8);
+        border-top: 2px solid rgba(0,180,216,0.3);
+        border-radius: 10px;
+        padding: 16px 20px;
+        transition: border-color 0.2s, transform 0.15s;
+        position: relative;
+        overflow: hidden;
+    }
+    [data-testid="metric-container"]::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(0,180,216,0.5), transparent);
+    }
+    [data-testid="metric-container"]:hover {
+        border-color: rgba(0,212,255,0.35);
+        transform: translateY(-1px);
+    }
+    [data-testid="metric-container"] > div { color: #FAFAFA !important; }
+    [data-testid="stMetricValue"] {
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 1.5rem !important;
+        font-weight: 600 !important;
         letter-spacing: -0.5px;
     }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.7rem !important;
+        font-weight: 500 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 1.2px !important;
+        color: #5E7291 !important;
+    }
+    [data-testid="stMetricDelta"] {
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 0.8rem !important;
+    }
+
+    /* ── Header ───────────────────────────── */
+    .dashboard-header {
+        background: linear-gradient(135deg, 
+            rgba(0,180,216,0.04) 0%, 
+            rgba(0,212,255,0.02) 50%, 
+            transparent 100%);
+        border-bottom: 1px solid rgba(0,180,216,0.12);
+        border-radius: 0 0 12px 12px;
+        padding: 1.2rem 0 1rem;
+        margin-bottom: 1.5rem;
+        position: relative;
+    }
+    .dashboard-header::after {
+        content: '';
+        position: absolute;
+        bottom: -1px; left: 0; right: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(0,180,216,0.5) 50%, transparent);
+    }
+    .dashboard-title {
+        font-size: 1.7rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #00D4FF 0%, #0090B8 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        letter-spacing: -0.8px;
+    }
     .dashboard-subtitle {
-        font-size: 0.85rem;
-        color: #888;
+        font-size: 0.8rem;
+        color: #4A5568;
         margin-top: 4px;
+        letter-spacing: 0.2px;
     }
-
-    /* Section headers */
-    .section-header {
-        font-size: 0.75rem;
+    .live-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        background: rgba(0,230,118,0.08);
+        border: 1px solid rgba(0,230,118,0.25);
+        color: #00E676;
+        font-size: 0.65rem;
         font-weight: 600;
-        color: #888;
-        text-transform: uppercase;
         letter-spacing: 1.5px;
-        margin: 1.5rem 0 0.5rem;
-        border-left: 3px solid #00B4D8;
-        padding-left: 8px;
+        text-transform: uppercase;
+        padding: 3px 10px;
+        border-radius: 20px;
+        font-family: 'JetBrains Mono', monospace;
+        margin-left: 10px;
+    }
+    .live-badge::before {
+        content: '';
+        width: 5px;
+        height: 5px;
+        background: #00E676;
+        border-radius: 50%;
+        animation: blink 1.5s infinite;
+    }
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.2; }
     }
 
-    /* Status badge */
+    /* ── Section Headers ──────────────────── */
+    .section-header {
+        font-size: 0.68rem;
+        font-weight: 600;
+        color: #4A6080;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin: 1.8rem 0 0.8rem;
+        padding-left: 10px;
+        border-left: 3px solid #00B4D8;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    /* ── Info Cards ───────────────────────── */
+    .info-box {
+        background: linear-gradient(135deg, #111520, #0F1420);
+        border: 1px solid #1E2538;
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin: 8px 0;
+        position: relative;
+        overflow: hidden;
+    }
+    .info-box::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0;
+        width: 3px; height: 100%;
+        background: linear-gradient(180deg, #00B4D8, transparent);
+        border-radius: 3px;
+    }
+
+    /* ── Status Badges ────────────────────── */
     .status-badge {
         display: inline-block;
-        padding: 2px 10px;
-        border-radius: 12px;
-        font-size: 0.75rem;
+        padding: 3px 10px;
+        border-radius: 20px;
+        font-size: 0.7rem;
         font-weight: 600;
-        font-family: 'IBM Plex Mono', monospace;
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 0.5px;
     }
-    .status-up   { background: rgba(0,230,118,0.15); color: #00E676; border: 1px solid #00E676; }
-    .status-down { background: rgba(255,23,68,0.15);  color: #FF1744; border: 1px solid #FF1744; }
-    .status-neu  { background: rgba(255,215,64,0.15); color: #FFD740; border: 1px solid #FFD740; }
+    .status-up   { background: rgba(0,230,118,0.12); color: #00E676; border: 1px solid rgba(0,230,118,0.3); }
+    .status-down { background: rgba(255,23,68,0.12);  color: #FF1744; border: 1px solid rgba(255,23,68,0.3); }
+    .status-neu  { background: rgba(255,215,64,0.12); color: #FFD740; border: 1px solid rgba(255,215,64,0.3); }
 
-    /* Info box */
-    .info-box {
-        background: #1E2130;
-        border: 1px solid #2A2D3E;
-        border-radius: 8px;
-        padding: 12px 16px;
-        margin: 8px 0;
+    /* ── Buttons ──────────────────────────── */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #005F73, #0077A8) !important;
+        border: 1px solid rgba(0,180,216,0.4) !important;
+        border-radius: 8px !important;
+        color: #E0F7FF !important;
+        font-weight: 600 !important;
+        font-size: 0.82rem !important;
+        letter-spacing: 0.3px !important;
+        transition: all 0.2s ease !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #0077A8, #009CC5) !important;
+        border-color: rgba(0,212,255,0.6) !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 15px rgba(0,180,216,0.2) !important;
+    }
+    .stButton > button {
+        background: rgba(20,25,40,0.8) !important;
+        border: 1px solid rgba(60,70,100,0.6) !important;
+        border-radius: 8px !important;
+        color: #8BA0BC !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+    }
+    .stButton > button:hover {
+        border-color: rgba(0,180,216,0.4) !important;
+        color: #00D4FF !important;
     }
 
-    /* Hide Streamlit default elements */
-    /* #MainMenu { visibility: hidden; } */
-    /* footer { visibility: hidden; } */
-    /* header { visibility: hidden; } */
+    /* ── Selectbox & Inputs ───────────────── */
+    .stSelectbox [data-baseweb="select"] > div {
+        background: #0F1420 !important;
+        border-color: #1E2538 !important;
+        border-radius: 8px !important;
+        color: #C8D8E8 !important;
+    }
+    .stNumberInput > div > div > input,
+    .stTextInput > div > div > input {
+        background: #0F1420 !important;
+        border: 1px solid #1E2538 !important;
+        border-radius: 8px !important;
+        color: #C8D8E8 !important;
+        font-family: 'JetBrains Mono', monospace !important;
+    }
+    .stNumberInput > div > div > input:focus,
+    .stTextInput > div > div > input:focus {
+        border-color: rgba(0,180,216,0.5) !important;
+        box-shadow: 0 0 0 2px rgba(0,180,216,0.1) !important;
+    }
+
+    /* ── Slider ───────────────────────────── */
+    .stSlider > div > div > div > div {
+        background: linear-gradient(90deg, #00B4D8, #0077A8) !important;
+    }
+
+    /* ── Dataframe ────────────────────────── */
+    .stDataFrame {
+        border: 1px solid #1E2538 !important;
+        border-radius: 10px !important;
+        overflow: hidden;
+    }
+    .stDataFrame thead th {
+        background: #0A0E1A !important;
+        color: #4A6080 !important;
+        font-size: 0.7rem !important;
+        text-transform: uppercase !important;
+        letter-spacing: 1px !important;
+        font-weight: 600 !important;
+    }
+
+    /* ── Expander ─────────────────────────── */
+    .streamlit-expanderHeader {
+        background: #0F1420 !important;
+        border: 1px solid #1E2538 !important;
+        border-radius: 8px !important;
+        color: #8BA0BC !important;
+        font-size: 0.85rem !important;
+    }
+
+    /* ── Spinner ──────────────────────────── */
+    .stSpinner > div {
+        border-top-color: #00B4D8 !important;
+    }
+
+    /* ── Alert boxes ──────────────────────── */
+    .stAlert {
+        border-radius: 8px !important;
+        border: none !important;
+    }
+    .stSuccess { background: rgba(0,230,118,0.08) !important; border-left: 3px solid #00E676 !important; }
+    .stInfo    { background: rgba(0,180,216,0.08) !important; border-left: 3px solid #00B4D8 !important; }
+    .stWarning { background: rgba(255,215,64,0.08) !important; border-left: 3px solid #FFD740 !important; }
+    .stError   { background: rgba(255,23,68,0.08) !important; border-left: 3px solid #FF1744 !important; }
+
+    /* ── Divider ──────────────────────────── */
+    hr {
+        border: none !important;
+        height: 1px !important;
+        background: linear-gradient(90deg, transparent, rgba(0,180,216,0.2) 50%, transparent) !important;
+        margin: 1rem 0 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -110,10 +349,16 @@ st.markdown("""
 # ─────────────────────────────────────────────
 # Header
 # ─────────────────────────────────────────────
-st.markdown("""
+st.markdown(f"""
 <div class="dashboard-header">
-    <div class="dashboard-title">📊 VN Market Dashboard</div>
-    <div class="dashboard-subtitle">Phân tích độ rộng & sentiment thị trường chứng khoán Việt Nam </div>
+    <div style="display:flex; align-items:center; gap:0;">
+        <span class="dashboard-title">⟨ VN Market Terminal ⟩</span>
+        <span class="live-badge">LIVE</span>
+    </div>
+    <div class="dashboard-subtitle">
+        Vietnam Stock Market Intelligence &nbsp;·&nbsp; Breadth · Sentiment · AI-Powered Analysis
+        &nbsp;&nbsp;<span style="color:#2A3D55; font-family:'JetBrains Mono',monospace;">v3.1</span>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -122,13 +367,20 @@ st.markdown("""
 # Sidebar Filters
 # ─────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### ⚙️ Bộ lọc")
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid rgba(0,180,216,0.12);">
+        <span style="font-size:1.2rem;">📊</span>
+        <span style="font-weight:700;font-size:0.95rem;color:#E0F0FF;">VN Terminal</span>
+        <span style="font-size:0.65rem;color:#4A6080;font-family:JetBrains Mono,monospace;">v3.0</span>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("### ⚙️ Configuration")
 
     exchange = st.selectbox(
-        "Sàn giao dịch",
+        "Exchange Selection",
         options=["HOSE", "HNX", "UPCOM", "VN30", "VN100", "ALL"],
         index=0,
-        help="Chọn sàn hoặc rổ chỉ số để phân tích"
+        help="Select exchange or index bucket to analyze"
     )
 
     st.markdown("---")
@@ -136,14 +388,14 @@ with st.sidebar:
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         start_date = st.date_input(
-            "Từ ngày",
+            "Start Date",
             value=date.today() - timedelta(days=720),
             min_value=date(2020, 1, 1),
             max_value=date.today(),
         )
     with col_d2:
         end_date = st.date_input(
-            "Đến ngày",
+            "End Date",
             value=date.today(),
             min_value=date(2020, 1, 1),
             max_value=date.today(),
@@ -155,7 +407,7 @@ with st.sidebar:
         "MA Periods",
         options=[10, 20, 50],
         default=[10, 20, 50],
-        help="Chọn các đường MA để phân tích"
+        help="Select MA periods to analyze"
     )
     if not ma_periods:
         ma_periods = [10, 20, 50]
@@ -163,7 +415,7 @@ with st.sidebar:
     st.markdown("---")
 
     lookback_days = st.slider(
-        "Lịch sử hiển thị (ngày)",
+        "Historical Lookback (Days)",
         min_value=20,
         max_value=200,
         value=60,
@@ -173,21 +425,33 @@ with st.sidebar:
     st.markdown("---")
 
     min_liq = st.sidebar.slider(
-        "Thanh khoản tối thiểu (Tỷ VNĐ/phiên)",
+        "Min Liquidity (Bn VND/Session)",
         min_value=0.0,
         max_value=100.0,
         value=10.0,
         step=1.0,
-        help="Lọc các mã có GTGD trung bình 20 phiên gần nhất lớn hơn X tỷ"
+        help="Filter stocks based on turnover"
     )
 
+    liq_mode = st.sidebar.selectbox(
+        "Liquidity Metric",
+        options=["Mean (Average)", "Median", "Min", "Last Session"],
+        index=0
+    )
+    liq_mode_map = {
+        "Mean (Average)": "mean", 
+        "Median": "median", 
+        "Min": "min", 
+        "Last Session": "last"
+    }
+
     st.markdown("---")
 
-    run_btn = st.button("🔄 Tải dữ liệu", use_container_width=True, type="primary")
+    run_btn = st.button("🔄 Run Analysis", use_container_width=True, type="primary")
 
     st.markdown("---")
-    st.markdown("### 🧪 Backtest Stochastic")
-    bt_ticker = st.text_input("Mã cổ phiếu", value="SSI", help="Nhập mã CP để chạy backtest tín hiệu Stochastic")
+    st.markdown("### 🧪 Stochastic Backtest")
+    bt_ticker = st.text_input("Symbol", value="SSI", help="Enter symbol to run Stochastic crossover backtest")
     
     col_bt1, col_bt2 = st.columns(2)
     with col_bt1:
@@ -197,27 +461,27 @@ with st.sidebar:
         bt_d = st.number_input("%D Period", value=3, min_value=1)
         bt_overbought = st.number_input("Overbought", value=80, max_value=100)
         
-    bt_run = st.button("🚀 Chạy Backtest", use_container_width=True)
+    bt_run = st.button("🚀 Run Backtest", use_container_width=True)
     
     st.markdown("---")
-    st.markdown("### 🔍 VN100 Stochastic Scanner")
-    scanner_run = st.button("📊 Quét tín hiệu VN30", use_container_width=True)
+    st.markdown("### 🔍 Stock Signal Scanner")
+    scanner_run = st.button("📊 Scan VN30 Signals", use_container_width=True)
 
     st.markdown("---")
-    st.markdown("### 🧠 AI Multi-Factor Backtest")
-    ai_ticker = st.text_input("Mã CP (AI)", value="SSI", key="ai_ticker_input", help="Phân tích mã CP kết hợp Vàng, Dầu, Lãi suất, Khối ngoại")
+    st.markdown("### 🧠 AI Multi-Factor Analysis")
+    ai_ticker = st.text_input("Symbol (AI)", value="SSI", key="ai_ticker_input", help="AI Multi-factor analysis combined with Macro data")
     ai_split = st.slider("Train/Test Split", 0.5, 0.9, 0.7, 0.1)
-    ai_run = st.button("🤖 Chạy AI Backtest", use_container_width=True)
-    ai_scanner_run = st.button("🔍 Quét AI VN100", use_container_width=True, help="Quét toàn bộ rổ VN100 bằng mô hình AI đa nhân tố")
+    ai_run = st.button("🤖 Run AI Analysis", use_container_width=True)
+    ai_scanner_run = st.button("🔍 AI VN100 Scanner", use_container_width=True, help="Scan VN100 bucket using AI multi-factor models")
 
     st.markdown("---")
     ticker_list = tk.get_tickers(exchange)
     st.markdown(f"""
     <div class="info-box">
-        <div style="color:#888;font-size:0.75rem">THÔNG TIN</div>
+        <div style="color:#888;font-size:0.75rem">INFORMATION</div>
         <div style="margin-top:6px">
             <b style="color:#00B4D8">{exchange}</b><br>
-            <span style="color:#FAFAFA;font-size:0.9rem">{len(ticker_list):,} mã cổ phiếu</span><br>
+            <span style="color:#FAFAFA;font-size:0.9rem">{len(ticker_list):,} tickers</span><br>
             <span style="color:#888;font-size:0.75rem">{start_date} → {end_date}</span>
         </div>
     </div>
@@ -229,9 +493,13 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_market_data(exchange: str, start: str, end: str) -> dict:
+def load_market_data(exchange: str, start: str, end: str, custom_tickers: list = None) -> dict:
     """Fetch & process toàn bộ dữ liệu thị trường"""
-    ticker_list = tk.get_tickers(exchange)
+    if custom_tickers:
+        ticker_list = custom_tickers
+    else:
+        ticker_list = tk.get_tickers(exchange)
+        
     if "VNINDEX" not in ticker_list:
         ticker_list.append("VNINDEX")
 
@@ -250,7 +518,7 @@ def load_market_data(exchange: str, start: str, end: str) -> dict:
     return fetcher.parse_results(raw_results)
 
 
-def compute_all_stats(prices_dict: dict, ma_periods: list, lookback: int) -> dict:
+def compute_all_stats(prices_dict: dict, ma_periods: list, lookback: int, agg_liq_map: dict = {}) -> dict:
     """Tính tất cả chỉ số từ dữ liệu giá"""
     ma_stats     = calculator.compute_ma_stats(prices_dict, ma_periods)
     ma_history   = calculator.compute_ma_history(prices_dict, ma_periods, lookback)
@@ -262,10 +530,12 @@ def compute_all_stats(prices_dict: dict, ma_periods: list, lookback: int) -> dic
     dist_data    = calculator.compute_change_distribution(prices_dict)
     mc_df        = calculator.compute_mcclellan(ad_history) if not ad_history.empty else pd.DataFrame()
     power_hist   = calculator.compute_market_power_history(prices_dict, lookback)
+    sector_liq   = calculator.compute_sector_liquidity(prices_dict, agg_liq_map)
     
     # Advanced Analytics
     adv_analytics = calculator.compute_advanced_analytics(ma_history)
     ad_history['thrust'] = calculator.compute_breadth_thrust(ad_history)
+    influence = calculator.compute_index_influence(prices_dict)
     
     sentiment_history = calculator.compute_sentiment_history(
         prices_dict, 
@@ -293,6 +563,8 @@ def compute_all_stats(prices_dict: dict, ma_periods: list, lookback: int) -> dic
         'sentiment':    sentiment,
         'sentiment_history': sentiment_history,
         'total_tickers': len(prices_dict),
+        'sector_liq':   sector_liq,
+        'index_influence': influence,
     }
 
 
@@ -307,15 +579,69 @@ if 'bt_results' not in st.session_state:
     st.session_state.bt_results = None
 if 'bt_target' not in st.session_state:
     st.session_state.bt_target = ""
+if 'agg_liq_map' not in st.session_state:
+    st.session_state.agg_liq_map = fetcher.load_liquidity_cache()
+if 'agg_results' not in st.session_state:
+    st.session_state.agg_results = {}
+if 'last_discord_send' not in st.session_state:
+    st.session_state.last_discord_send = None
+if 'last_market_date' not in st.session_state:
+    st.session_state.last_market_date = None
+
+
+# ─────────────────────────────────────────────
+# Cache Liquidity Refresh
+# ─────────────────────────────────────────────
+refresh_liq = st.sidebar.button("🔄 Refresh Liquidity Cache", help="Fetch real aggressive trading data from VPS to apply accurate filters")
+
+if refresh_liq:
+    with st.spinner("⏳ Scanning real market liquidity..."):
+        all_tk = tk.get_tickers("ALL")
+        agg_res = fetcher.batch_fetch_aggressive(all_tk)
+        st.session_state.agg_results = agg_res
+        liq_map = calculator.compute_liquidity_map(agg_res)
+        if liq_map:
+            fetcher.save_liquidity_cache(liq_map)
+            st.session_state.agg_liq_map = liq_map
+            st.success("✅ Update successful!")
+        else:
+            st.sidebar.error("❌ Failed to fetch liquidity data")
+            
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔔 NOTIFICATION SYSTEM")
+    
+    # Auto Discord logic at 15:00
+    now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    can_notify = st.session_state.get('data_loaded') and st.session_state.stats is not None
+    
+    if now.hour >= 15:
+        if st.session_state.last_discord_send != today_str:
+            if can_notify:
+                if st.sidebar.button("📤 Close Session & Send to Discord", type="primary", use_container_width=True):
+                    with st.sidebar:
+                        with st.spinner("🚀 Sending summary to Discord..."):
+                            success = notifier.send_market_summary_sync(st.session_state.stats)
+                            if success:
+                                st.session_state.last_discord_send = today_str
+                                st.success("✅ Discord notification sent successfully!")
+                            else:
+                                st.error("❌ Failed to send Discord notification. Check Webhook!")
+            else:
+                st.sidebar.warning("⚠️ Please click 'Run Analysis' before sending notification.")
+        else:
+            st.sidebar.success(f"✅ Report sent for {today_str}")
+    else:
+        st.sidebar.info("⏰ Wait until 15:00 to close session and send report.")
 
 
 # ─────────────────────────────────────────────
 # Trigger Backtest (Independent)
 # ─────────────────────────────────────────────
 if bt_run:
-    with st.spinner(f"🧪 Đang backtest mã {bt_ticker}..."):
+    with st.spinner(f"🧪 Running backtest for {bt_ticker}..."):
         try:
-            # Tải dữ liệu riêng cho ticker này (start_date lùi xa hơn để có dữ liệu SMA/Stoch chuẩn)
+            # Load specific data for backtest (extra lookback for MA/Stoch stability)
             bt_start = (start_date - timedelta(days=200)).strftime('%Y-%m-%d')
             raw_bt = fetcher.batch_fetch([bt_ticker], bt_start, end_date.strftime('%Y-%m-%d'))
             dict_bt = fetcher.parse_results(raw_bt)
@@ -333,9 +659,9 @@ if bt_run:
                 st.session_state.bt_results = results
                 st.session_state.bt_target = bt_ticker
             else:
-                st.error(f"❌ Không tìm thấy dữ liệu cho mã {bt_ticker}")
+                st.error(f"❌ Symbol {bt_ticker} not found")
         except Exception as e:
-            st.error(f"❌ Lỗi backtest: {e}")
+            st.error(f"❌ Backtest error: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -345,69 +671,72 @@ if 'scanner_results' not in st.session_state:
     st.session_state.scanner_results = None
 
 if scanner_run:
-    with st.spinner("🔍 Đang quét tín hiệu Stochastic cho rổ VN100..."):
+    with st.spinner("🔍 Scanning VN100 for Stochastic signals..."):
         try:
-            vn30_list = tk.VN30
-            # Tải dữ liệu 200 ngày để Stoch chuẩn
+            # Use VN100 as implied by label
+            vn_list = tk.VN100
             scanner_start = (date.today() - timedelta(days=200)).strftime('%Y-%m-%d')
-            raw_scan = fetcher.batch_fetch(vn30_list, scanner_start, date.today().strftime('%Y-%m-%d'))
+            raw_scan = fetcher.batch_fetch(vn_list, scanner_start, date.today().strftime('%Y-%m-%d'))
             dict_scan = fetcher.parse_results(raw_scan)
             
+            # Apply liquidity filter
+            dict_scan = calculator.filter_by_liquidity(dict_scan, min_liq, mode=liq_mode_map[liq_mode])
+            
             scan_rows = []
-            for ticker in vn30_list:
-                if ticker in dict_scan:
-                    t_data = dict_scan[ticker]
-                    df_t = pd.DataFrame({
-                        'close': t_data['close'],
-                        'high': t_data['high'],
-                        'low': t_data['low']
-                    }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
+            for ticker in dict_scan.keys():
+                t_data = dict_scan[ticker]
+                df_t = pd.DataFrame({
+                    'close': t_data['close'],
+                    'high': t_data['high'],
+                    'low': t_data['low']
+                }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
                     
-                    # 1. Chạy Backtest lịch sử
-                    bt = calculator.run_backtest_stochastic(df_t)
+                # 1. Run historical backtest
+                bt = calculator.run_backtest_stochastic(df_t)
+                
+                # 2. Get current state
+                df_stoch = calculator.compute_stochastic(df_t)
+                if not df_stoch.empty:
+                    last_k = df_stoch.iloc[-1]['%K']
+                    last_d = df_stoch.iloc[-1]['%D']
+                    prev_k = df_stoch.iloc[-2]['%K']
+                    prev_d = df_stoch.iloc[-2]['%D']
                     
-                    # 2. Lấy trạng thái hiện tại
-                    df_stoch = calculator.compute_stochastic(df_t)
-                    if not df_stoch.empty:
-                        last_k = df_stoch.iloc[-1]['%K']
-                        last_d = df_stoch.iloc[-1]['%D']
-                        prev_k = df_stoch.iloc[-2]['%K']
-                        prev_d = df_stoch.iloc[-2]['%D']
-                        
-                        signal = "Neutral"
-                        if prev_k <= prev_d and last_k > last_d:
-                            signal = "BUY (Cross Up)" if last_k < 30 else "Potential Up"
-                        elif prev_k >= prev_d and last_k < last_d:
-                            signal = "SELL (Cross Down)" if last_k > 70 else "Potential Down"
+                    signal = "Neutral"
+                    if prev_k <= prev_d and last_k > last_d:
+                        signal = "BUY (Cross Up)" if last_k < 30 else "Potential Up"
+                    elif prev_k >= prev_d and last_k < last_d:
+                        signal = "SELL (Cross Down)" if last_k > 70 else "Potential Down"
 
-                        wr_val = float(bt.get('win_rate', 0))
-                        total_ret_val = float(bt.get('total_return', 0))
-                        
-                        recommendation = "Nắm giữ"
-                        if signal == "BUY (Cross Up)":
-                            recommendation = "MUA MẠNH 🔥" if wr_val > 55 else "MUA ✅"
-                        elif signal == "SELL (Cross Down)":
-                            recommendation = "BÁN MẠNH ⚠️" if wr_val > 55 else "BÁN 🔻"
-                        elif signal == "Potential Up":
-                            recommendation = "Theo dõi MUA 👀"
-                        elif signal == "Potential Down":
-                            recommendation = "Theo dõi BÁN 📉"
+                    wr_val = float(bt.get('win_rate', 0))
+                    total_ret_val = float(bt.get('total_return', 0))
+                    
+                    recommendation = "Hold"
+                    if signal == "BUY (Cross Up)":
+                        recommendation = "STRONG BUY 🔥" if wr_val > 55 else "BUY ✅"
+                    elif signal == "SELL (Cross Down)":
+                        recommendation = "STRONG SELL ⚠️" if wr_val > 55 else "SELL 🔻"
+                    elif signal == "Potential Up":
+                        recommendation = "Watch BUY 👀"
+                    elif signal == "Potential Down":
+                        recommendation = "Watch SELL 📉"
 
-                        scan_rows.append({
-                            'Mã': ticker,
-                            'Giá hiện tại': f"{t_data['close'][-1]:,.2f}",
-                            '%K': round(last_k, 1),
-                            '%D': round(last_d, 1),
-                            'Tín hiệu hiện tại': signal,
-                            'Khuyến nghị': recommendation,
-                            'Win Rate': f"{wr_val}%",
-                            'Total Return': f"{total_ret_val}%",
-                            'Số lệnh': bt.get('total_trades', 0)
-                        })
+                    scan_rows.append({
+                        'Symbol': ticker,
+                        'Price': f"{t_data['close'][-1]:,.2f}",
+                        '%K': round(last_k, 1),
+                        '%D': round(last_d, 1),
+                        'Signal': signal,
+                        'Recommendation': recommendation,
+                        'Win Rate': f"{wr_val}%",
+                        'Total Return': f"{total_ret_val}%",
+                        'Trades': bt.get('total_trades', 0)
+                    })
+
             
             st.session_state.scanner_results = pd.DataFrame(scan_rows)
         except Exception as e:
-            st.error(f"❌ Lỗi quét VN30: {e}")
+            st.error(f"❌ VN100 Scan Error: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -417,9 +746,9 @@ if 'ai_results' not in st.session_state:
     st.session_state.ai_results = None
 
 if 'ai_run' in locals() and ai_run:
-    with st.spinner(f"🤖 Đang huấn luyện AI cho {ai_ticker}..."):
+    with st.spinner(f"🤖 Training AI for {ai_ticker}..."):
         try:
-            # Tải dữ liệu lịch sử dài (cần ít nhất 2 năm để model AI học tốt)
+            # Fetch long history (need at least 2 years for AI model)
             ai_start = (date.today() - timedelta(days=730)).strftime('%Y-%m-%d')
             ai_end_s = end_date.strftime('%Y-%m-%d')
             
@@ -436,14 +765,14 @@ if 'ai_run' in locals() and ai_run:
                     'volume': t_data['volume']
                 }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
                 
-                # Chạy AI Backtest
+                # Run AI Backtest
                 ai_res = calculator.run_backtest_ai(ai_ticker, df_ticker_raw, ai_start, ai_end_s, ai_split)
                 st.session_state.ai_results = ai_res
                 st.session_state.ai_target = ai_ticker
             else:
-                st.error(f"❌ Không tìm thấy dữ liệu cho mã {ai_ticker}")
+                st.error(f"❌ No data found for symbol {ai_ticker}")
         except Exception as e:
-            st.error(f"❌ Lỗi AI Engine: {e}")
+            st.error(f"❌ AI Engine Error: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -453,17 +782,20 @@ if 'ai_scan_results' not in st.session_state:
     st.session_state.ai_scan_results = None
 
 if 'ai_scanner_run' in locals() and ai_scanner_run:
-    with st.spinner("🤖 Đang quét rổ VN100 bằng AI (kỹ thuật + vĩ mô + khối ngoại)..."):
+    with st.spinner("🤖 Scanning VN100 with AI (Technical + Macro + Foreign)..."):
         try:
             vn30_list = tk.VN100
             ai_start = (date.today() - timedelta(days=730)).strftime('%Y-%m-%d')
             ai_end_s = end_date.strftime('%Y-%m-%d')
             
-            # Tải dữ liệu toàn bộ VN30
+            # Fetch data for all VN100
             raw_ai_scan = fetcher.batch_fetch(vn30_list, ai_start, ai_end_s)
             dict_ai_scan = fetcher.parse_results(raw_ai_scan)
             
-            # Tải dữ liệu vĩ mô & khối ngoại batch (tối ưu tốc độ)
+            # Apply liquidity filter
+            dict_ai_scan = calculator.filter_by_liquidity(dict_ai_scan, min_liq, mode=liq_mode_map[liq_mode])
+            
+            # Fetch Macro & Foreign Flow data (Optimized)
             from modules.ai_engine import AIEngine
             engine = AIEngine()
             macro_df = engine.fetch_macro_data(ai_start, ai_end_s)
@@ -485,9 +817,11 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                     full_df = engine.prepare_features(df_t, macro_df, foreign_df)
                     
                     if not full_df.empty:
-                        # Train mô hình nhanh cho mã này
+                        # Quick train for this ticker
                         engine.train(full_df)
                         signal = engine.predict(full_df)
+
+                        # Win/Loss logic (historical backtest on last 25%)
 
                         # Tính tỉ lệ Win/Loss lịch sử (backtest nhanh trên 25% dữ liệu cuối)
                         win_rate_pct, win_count, loss_count = None, 0, 0
@@ -507,7 +841,7 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                                 if pnl > 0: win_count += 1
                                 else: loss_count += 1
                                 pos = None
-                        if pos == 'long':  # Đóng lệnh còn mở ở cuối
+                        if pos == 'long':  # Close any open trade at the end
                             pnl = (test_df['close'].iloc[-1] - entry_p) / entry_p
                             if pnl > 0: win_count += 1
                             else: loss_count += 1
@@ -515,64 +849,64 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                         if total > 0:
                             win_rate_pct = round(win_count / total * 100, 1)
                         
-                        # Metadata cho hiển thị
+                        # Metadata for display
                         last_close = t_data['close'][-1]
                         change = t_data['change_pct']
                         
-                        # Lợi nhuận dự báo: trung bình TARGET_RET gần nhất (dòng cuối thường NaN)
+                        # Predicted Return: average TARGET_RET of last 20 sessions (last row is usually NaN)
                         valid_ret = full_df['TARGET_RET'].dropna()
                         pred_ret = valid_ret.tail(20).mean() * 100 if len(valid_ret) > 0 else 0.0
                         
-                        # Chỉ coi là BUY khi lợi nhuận kỳ vọng đủ cao
-                        MIN_STRONG_RET = 3.0  # 3% cho 5 phiên tới
+                        # Only consider BUY if expected return is sufficient
+                        MIN_STRONG_RET = 3.0  # 3% for next 5 sessions
                         if signal == 2 and pred_ret < MIN_STRONG_RET:
-                            signal = 1  # chuyển về HOLD nếu tín hiệu yếu
+                            signal = 1  # Downgrade to HOLD if signal strength is weak
                         
                         label = "BUY 🚀" if signal == 2 else ("SELL ⚠️" if signal == 0 else "HOLD ⏳")
                         
-                        # Thu thập điều kiện cổ phiếu đáp ứng (từ dòng cuối full_df)
+                        # Collect conditions met (from last row of full_df)
                         last_row = full_df.iloc[-1]
                         prev_row = full_df.iloc[-2] if len(full_df) > 1 else None
                         conditions = []
                         if signal == 2:
-                            conditions.append("✓ Tín hiệu AI: BUY")
+                            conditions.append("✓ AI Signal: BUY")
                         elif signal == 0:
-                            conditions.append("⚠ Tín hiệu AI: SELL")
+                            conditions.append("⚠ AI Signal: SELL")
                         else:
-                            conditions.append("○ Tín hiệu AI: HOLD")
+                            conditions.append("○ AI Signal: HOLD")
                         if pred_ret >= 3.0:
-                            conditions.append(f"✓ Lợi nhuận dự báo ≥ 3% ({pred_ret:+.1f}%)")
+                            conditions.append(f"✓ Predicted Return ≥ 3% ({pred_ret:+.1f}%)")
                         elif pred_ret > 0:
-                            conditions.append(f"✓ Lợi nhuận dự báo dương ({pred_ret:+.1f}%)")
+                            conditions.append(f"✓ Predicted Return Positive ({pred_ret:+.1f}%)")
                         elif pred_ret < -3:
-                            conditions.append(f"⚠ Lợi nhuận dự báo âm ({pred_ret:+.1f}%)")
+                            conditions.append(f"⚠ Predicted Return Negative ({pred_ret:+.1f}%)")
                         rsi = last_row.get('RSI', 50)
                         if rsi < 30:
-                            conditions.append(f"✓ RSI oversold ({rsi:.0f}) - cơ hội mua")
+                            conditions.append(f"✓ RSI Oversold ({rsi:.0f}) - Buying Opportunity")
                         elif rsi >= 70:
-                            conditions.append(f"⚠ RSI quá mua ({rsi:.0f})")
+                            conditions.append(f"⚠ RSI Overbought ({rsi:.0f})")
                         elif rsi < 70:
-                            conditions.append(f"✓ RSI không quá mua ({rsi:.0f})")
+                            conditions.append(f"✓ RSI Not Overbought ({rsi:.0f})")
                         ma20 = last_row.get('MA20')
                         if ma20 and last_close > ma20:
-                            conditions.append("✓ Giá trên MA20 (momentum)")
+                            conditions.append("✓ Price above MA20 (Momentum)")
                         elif ma20:
-                            conditions.append("○ Giá dưới MA20")
+                            conditions.append("○ Price below MA20")
                         ma50 = last_row.get('MA50')
                         if ma50 and last_close > ma50:
-                            conditions.append("✓ Giá trên MA50 (xu hướng)")
+                            conditions.append("✓ Price above MA50 (Trend)")
                         elif ma50:
-                            conditions.append("○ Giá dưới MA50")
+                            conditions.append("○ Price below MA50")
                         ff = last_row.get('foreignNetValue', 0)
                         if ff > 0:
-                            conditions.append("✓ Khối ngoại mua ròng")
+                            conditions.append("✓ Foreign Net Buying")
                         elif ff < 0:
-                            conditions.append("○ Khối ngoại bán ròng")
+                            conditions.append("○ Foreign Net Selling")
                         ret1d = last_row.get('RETURNS_1D', 0)
                         if ret1d is not None and ret1d > 0:
-                            conditions.append("✓ Phiên gần nhất tăng giá")
+                            conditions.append("✓ Last session Price Increased")
                         elif ret1d is not None and ret1d < 0:
-                            conditions.append("○ Phiên gần nhất giảm giá")
+                            conditions.append("○ Last session Price Decreased")
 
                         # Điều kiện vĩ mô & giá hàng hóa toàn cầu (so với phiên trước)
                         if prev_row is not None:
@@ -594,23 +928,23 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
                             us10y_chg = _macro_change('US10Y')
 
                             if gold_chg is not None and abs(gold_chg) >= 1.0:
-                                direction = "tăng" if gold_chg > 0 else "giảm"
-                                conditions.append(f"○ Giá vàng thế giới {direction} khoảng {gold_chg:+.1f}% hôm nay")
+                                direction = "up" if gold_chg > 0 else "down"
+                                conditions.append(f"○ Gold price {direction} approx {gold_chg:+.1f}% today")
 
                             if oil_chg is not None and abs(oil_chg) >= 1.0:
-                                direction = "tăng" if oil_chg > 0 else "giảm"
-                                conditions.append(f"○ Giá dầu thô {direction} khoảng {oil_chg:+.1f}% hôm nay")
+                                direction = "up" if oil_chg > 0 else "down"
+                                conditions.append(f"○ Crude Oil {direction} approx {oil_chg:+.1f}% today")
 
                             if dxy_chg is not None and abs(dxy_chg) >= 0.5:
-                                direction = "tăng" if dxy_chg > 0 else "giảm"
-                                conditions.append(f"○ Chỉ số USD (DXY) {direction} khoảng {dxy_chg:+.1f}%")
+                                direction = "up" if dxy_chg > 0 else "down"
+                                conditions.append(f"○ USD Index (DXY) {direction} approx {dxy_chg:+.1f}%")
 
                             if us10y_chg is not None and abs(us10y_chg) >= 0.5:
-                                direction = "tăng" if us10y_chg > 0 else "giảm"
-                                conditions.append(f"○ Lợi suất TPCP Mỹ 10Y {direction} khoảng {us10y_chg:+.1f} điểm bps tương đối")
+                                direction = "up" if us10y_chg > 0 else "down"
+                                conditions.append(f"○ US 10Y Treasury Yield {direction} approx {us10y_chg:+.1f} bps relative")
 
                         if len(conditions) <= 1:
-                            conditions.append("— Không đủ điều kiện nổi bật")
+                            conditions.append("— No significant conditions")
 
                         # Điểm chất lượng tín hiệu: dựa trên số điều kiện tích cực / tiêu cực
                         positives = sum(1 for c in conditions if c.startswith("✓"))
@@ -620,560 +954,617 @@ if 'ai_scanner_run' in locals() and ai_scanner_run:
 
                         conditions_str = "\n".join(conditions)
                         
-                        # Giá mua khuyến nghị (ví dụ: thấp hơn giá hiện tại 0.5% để tối ưu)
+                        # Recommended Buy Price (0.5% below current for optimization)
                         buy_price = last_close * 0.995 if signal == 2 else None
-                        # Giá cắt lỗ & chốt bán mặc định (-3%, +8%) - chỉ khi có tín hiệu BUY
+                        # Default Stop Loss & Take Profit (-3%, +8%) - only for BUY signals
                         stop_loss_price = buy_price * 0.97 if buy_price else None
                         take_profit_price = buy_price * 1.08 if buy_price else None
                         
                         win_loss_str = f"{win_rate_pct}% ({win_count}W/{loss_count}L)" if win_rate_pct is not None else "-"
 
                         ai_scan_rows.append({
-                            'Mã': ticker,
-                            'Giá hiện tại': f"{last_close:,.2f}",
-                            '% Thay đổi': f"{change}%",
-                            'Dự báo AI': label,
-                            'Giá mua': f"{buy_price:,.2f}" if buy_price else "-",
-                            'Giá cắt lỗ': f"{stop_loss_price:,.2f}" if stop_loss_price else "-",
-                            'Giá chốt bán': f"{take_profit_price:,.2f}" if take_profit_price else "-",
-                            'Lợi nhuận dự báo (%)': f"{pred_ret:+.2f}%",
+                            'Symbol': ticker,
+                            'Last Price': f"{last_close:,.2f}",
+                            '% Change': f"{change}%",
+                            'Liquidity (Bn)': round(t_data.get('avg_liquidity_bn', 0), 1),
+                            'AI Forecast': label,
+                            'Buy Price': f"{buy_price:,.2f}" if buy_price else "-",
+                            'Stop Loss': f"{stop_loss_price:,.2f}" if stop_loss_price else "-",
+                            'Take Profit': f"{take_profit_price:,.2f}" if take_profit_price else "-",
+                            'Exp. Return (%)': f"{pred_ret:+.2f}%",
                             'Win/Loss': win_loss_str,
-                            'Điểm tín hiệu': quality_score,
-                            'Điều kiện đáp ứng': conditions_str,
-                            'Tín hiệu': signal,
+                            'Signal Score': quality_score,
+                            'Conditions Met': conditions_str,
+                            'Signal': signal,
                             '_pred_ret': pred_ret
                         })
             
-            # Sắp xếp theo lợi nhuận dự báo giảm dần → mã có khả năng lợi nhuận cao hiển thị trước
+            # Sort by predicted return descending
             ai_scan_rows.sort(key=lambda r: -r['_pred_ret'])
             for r in ai_scan_rows:
                 r.pop('_pred_ret', None)
             
-            cols = ['Mã', 'Giá hiện tại', '% Thay đổi', 'Dự báo AI', 'Giá mua', 'Giá cắt lỗ', 'Giá chốt bán', 'Lợi nhuận dự báo (%)', 'Win/Loss', 'Điểm tín hiệu', 'Điều kiện đáp ứng', 'Tín hiệu']
+            cols = ['Symbol', 'Last Price', '% Change', 'Liquidity (Bn)', 'AI Forecast', 'Buy Price', 'Stop Loss', 'Take Profit', 'Exp. Return (%)', 'Win/Loss', 'Signal Score', 'Conditions Met', 'Signal']
             st.session_state.ai_scan_results = pd.DataFrame(ai_scan_rows, columns=cols)
+
         except Exception as e:
-            st.error(f"❌ Lỗi quét AI VN30: {e}")
+            st.error(f"❌ VN30 AI Scan Error: {e}")
 
 
 # ─────────────────────────────────────────────
-# Trigger Load
+# Trigger Load (OPTIMIZED: Filter by Aggressive first)
 # ─────────────────────────────────────────────
 if run_btn or not st.session_state.data_loaded:
-    with st.spinner(f"⏳ Đang tải dữ liệu {exchange} ({len(tk.get_tickers(exchange)):,} mã)..."):
+    tickers_to_scan = tk.get_tickers(exchange)
+    
+    with st.spinner(f"⏳ Scanning real-time liquidity for {exchange} ({len(tickers_to_scan)} symbols)..."):
         try:
+            # 1. Fetch Aggressive data cho toàn bộ danh sách để lọc
+            agg_results = fetcher.batch_fetch_aggressive(tickers_to_scan)
+            st.session_state.agg_results = agg_results
+            agg_liq_map = calculator.compute_liquidity_map(agg_results)
+            st.session_state.agg_liq_map = agg_liq_map
+            fetcher.save_liquidity_cache(agg_liq_map) # Cache lại
+            
+            # 2. Lọc danh sách mã thỏa mãn điều kiện
+            winners = []
+            for t in tickers_to_scan:
+                if calculator.is_index_ticker(t):
+                    winners.append(t)
+                    continue
+                liq = agg_liq_map.get(t, 0)
+                if liq >= min_liq:
+                    winners.append(t)
+            
+            full_count = len(tickers_to_scan)
+            filtered_count = len(winners)
+            
+            if not winners or (len(winners) == 1 and calculator.is_index_ticker(winners[0])):
+                st.warning(f"⚠️ No symbols found matching liquidity >= {min_liq} Bn VND (Based on actual volume).")
+                st.stop()
+
+            # 3. Tải dữ liệu lịch sử CHỈ cho các mã đã lọc
+            st.info(f"📊 Found **{filtered_count}** tickers. Loading technical data...")
+            
             prices_dict = load_market_data(
-                exchange,
+                "ALL", # Đã có danh sách winners cụ thể
                 start_date.strftime('%Y-%m-%d'),
-                end_date.strftime('%Y-%m-%d')
+                end_date.strftime('%Y-%m-%d'),
+                custom_tickers=winners
             )
 
             if not prices_dict:
-                st.error("❌ Không tải được dữ liệu. Kiểm tra kết nối mạng hoặc thử lại.")
+                st.error("❌ Failed to load technical data.")
                 st.stop()
 
-            # Apply Liquidity Filter
-            prices_dict = calculator.filter_by_liquidity(prices_dict, min_liq)
+            # Gán lại thông tin thanh khoản chuẩn vào dict để hiển thị ở các bảng
+            for t, data in prices_dict.items():
+                if t in agg_liq_map:
+                    data['avg_liquidity_bn'] = agg_liq_map[t]
 
-            if not prices_dict:
-                st.warning(f"⚠️ Không có mã nào thỏa mãn điều kiện thanh khoản > {min_liq} tỷ.")
-                st.stop()
-
-            st.session_state.stats = compute_all_stats(prices_dict, ma_periods, lookback_days)
+            st.session_state.stats = compute_all_stats(prices_dict, ma_periods, lookback_days, agg_liq_map=st.session_state.get('agg_liq_map', {}))
             st.session_state.data_loaded = True
             st.session_state.exchange = exchange
-            st.success(f"✅ Đã tải {st.session_state.stats['total_tickers']:,} mã thành công!")
+            st.success(f"✅ Successfully loaded {len(prices_dict)} tickers!")
 
         except Exception as e:
-            st.error(f"❌ Lỗi: {e}")
+            st.error(f"❌ System Error: {e}")
             st.stop()
 
 
 # ─────────────────────────────────────────────
 # Render Dashboard
 # ─────────────────────────────────────────────
-if not st.session_state.data_loaded or st.session_state.stats is None:
-    st.info("👈 Nhấn **Tải dữ liệu** ở sidebar để bắt đầu phân tích")
-    st.stop()
+# ─────────────────────────────────────────────
+# Main Dashboard Tabs
+# ─────────────────────────────────────────────
+tabs = st.tabs([
+    "🌍 Market Overview", 
+    "📈 Stock Analysis", 
+    "🔍 Scanners",
+    "🤖 AI Engine",
+    "⚖️ Tools"
+])
 
-s = st.session_state.stats
-sentiment = s['sentiment']
-ad = s['ad_stats']
-hl = s['hl_stats']
-
-
-# ══════════════════════════════════════════════
-# ROW 1: KPIs
-# ══════════════════════════════════════════════
-st.markdown('<div class="section-header">TỔNG QUAN THỊ TRƯỜNG</div>', unsafe_allow_html=True)
-
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-
-with k1:
-    st.metric(
-        "🟢 Tăng",
-        f"{ad['advances']:,}",
-        f"{ad['pct_advance']:.1f}%",
-    )
-with k2:
-    st.metric(
-        "🔴 Giảm",
-        f"{ad['declines']:,}",
-        f"{100 - ad['pct_advance'] - (ad['unchanged']/ad['total']*100 if ad['total'] else 0):.1f}%",
-    )
-with k3:
-    st.metric(
-        "⚪ Đứng giá",
-        f"{ad['unchanged']:,}",
-    )
-with k4:
-    st.metric(
-        "📊 Tổng mã",
-        f"{ad['total']:,}",
-    )
-with k5:
-    st.metric(
-        "⬆️ 52W High",
-        f"{hl['new_highs']:,}",
-        delta=f"vs {hl['new_lows']} lows",
-    )
-with k6:
+# ─────────────────────────────────────────────
+# TAB 1: THỊ TRƯỜNG (MARKET OVERVIEW)
+# ─────────────────────────────────────────────
+with tabs[0]:
+    s = st.session_state.stats
+    sentiment = s['sentiment']
+    ad = s['ad_stats']
+    hl = s['hl_stats']
     vol_mom = s['vol_momentum']
-    st.metric(
-        "💧 Volume Mom",
-        f"{vol_mom:.2f}x",
-        delta="↑ tăng" if vol_mom > 1.0 else "↓ giảm",
-        delta_color="normal" if vol_mom > 1.0 else "inverse",
-    )
 
+    # ── Index & Liquidity Row ───────────────────────────────────
+    st.markdown('<div class="section-header">INDEX & MARKET LIQUIDITY</div>', unsafe_allow_html=True)
+    col_vni, col_liq = st.columns(2)
+    with col_vni:
+        st.plotly_chart(charts.vnindex_chart(s['prices_raw'], lookback=lookback_days), use_container_width=True)
+    with col_liq:
+        st.plotly_chart(charts.liquidity_chart(s['liq_history']), use_container_width=True)
 
-# ══════════════════════════════════════════════
-# ROW 2: Sentiment + A/D Donut + AD Line
-# ══════════════════════════════════════════════
-st.markdown('<div class="section-header">SENTIMENT & ADVANCE/DECLINE</div>', unsafe_allow_html=True)
-
-col_gauge, col_donut, col_adline = st.columns([1, 1, 2])
-
-with col_gauge:
-    st.markdown(f"""
-    <div style="text-align:center; padding: 8px 0 4px;">
-        <span style="font-size:0.75rem; color:#888; text-transform:uppercase; letter-spacing:1px;">Fear/Greed Index</span>
-    </div>
-    """, unsafe_allow_html=True)
-    fig_gauge = charts.sentiment_gauge(
-        sentiment['score'], sentiment['label'], sentiment['color']
-    )
-    st.plotly_chart(fig_gauge, use_container_width=True)
-    
-    # Sentiment History link
-    fig_sent_hist = charts.sentiment_history_chart(s['sentiment_history'])
-    st.plotly_chart(fig_sent_hist, use_container_width=True)
-
-with col_donut:
-    fig_donut = charts.advance_decline_donut(ad)
-    st.plotly_chart(fig_donut, use_container_width=True)
-
-with col_adline:
-    fig_adline = charts.ad_line_chart(s['ad_history'])
-    st.plotly_chart(fig_adline, use_container_width=True)
-
-
-# ══════════════════════════════════════════════
-# ROW 3: MA Analysis + Distribution
-# ══════════════════════════════════════════════
-st.markdown('<div class="section-header">PHÂN TÍCH MOVING AVERAGE</div>', unsafe_allow_html=True)
-
-col_ma, col_dist = st.columns([1, 1])
-
-with col_ma:
-    fig_ma = charts.ma_above_bar(s['ma_stats'])
-    st.plotly_chart(fig_ma, use_container_width=True)
-
-    # MA table
-    ma_rows = []
-    for p, data in sorted(s['ma_stats'].items()):
-        ma_rows.append({
-            'Period': f'MA{p}',
-            'Số lượng (Trên/Dưới)': f"{data['above']} / {data['below']}",
-            '% Trên MA': f"{data['pct_above']}%",
-            'Tổng mã đạt chuẩn': data['total'],
-        })
-    if ma_rows:
-        st.dataframe(
-            pd.DataFrame(ma_rows),
-            hide_index=True,
-            use_container_width=True,
-        )
-
-with col_dist:
-    fig_dist = charts.change_distribution_chart(s['dist_data'])
-    st.plotly_chart(fig_dist, use_container_width=True)
-
-# Historical Breadth
-st.markdown('<div class="section-header">DIỄN BIẾN ĐỘ RỘNG THỊ TRƯỜNG</div>', unsafe_allow_html=True)
-fig_ma_hist = charts.ma_breadth_history_chart(s['ma_history'])
-st.plotly_chart(fig_ma_hist, use_container_width=True)
-
-# Historical Table Summary
-if not s['ma_history'].empty:
-    with st.expander("📊 Bảng thống kê độ rộng lịch sử", expanded=True):
-        df_hist = s['ma_history'].copy().sort_values('date', ascending=False)
-        
-        # Rename columns for display
-        cols_map = {'date': 'Ngày', 'VNINDEX': 'VNINDEX'}
-        for col in df_hist.columns:
-            if col.startswith('count_ma'):
-                p = col.replace('count_ma', '')
-                cols_map[col] = f'MA{p} (Mã)'
-            elif col.startswith('pct_ma'):
-                p = col.replace('pct_ma', '')
-                cols_map[col] = f'MA{p} (%)'
-        
-        df_display = df_hist[list(cols_map.keys())].rename(columns=cols_map)
-        
-        # Apply Styling
-        def style_vnindex(val, prev_val):
-            if pd.isna(prev_val) or val == prev_val: return ""
-            color = "#00C853" if val > prev_val else "#FF1744"
-            return f"color: {color}; font-weight: bold"
-
-        def style_ma_pct(val):
-            if val >= 80: color = "rgba(255, 23, 68, 0.3)" # Overbought
-            elif val <= 20: color = "rgba(0, 230, 118, 0.3)" # Oversold
-            elif val > 55: color = "rgba(105, 240, 174, 0.1)"
-            else: color = "transparent"
-            return f"background-color: {color}"
-
-        # Prepare styler
-        def make_styler(df_to_style):
-            # Safe copy
-            df = df_to_style.copy()
-            df = df.sort_values('Ngày') # Sort for diff calculation
-            
-            # Use 'VNINDEX' if exists
-            use_vni = 'VNINDEX' in df.columns
-            if use_vni:
-                df['VNI_Prev'] = df['VNINDEX'].shift(1)
-            
-            def vni_color(row):
-                colors = [''] * len(row)
-                if use_vni and 'VNI_Prev' in row.index and not pd.isna(row['VNI_Prev']):
-                    vni_idx = row.index.get_loc('VNINDEX')
-                    if row['VNINDEX'] > row['VNI_Prev']: colors[vni_idx] = 'color: #00E676; font-weight: bold'
-                    elif row['VNINDEX'] < row['VNI_Prev']: colors[vni_idx] = 'color: #FF1744; font-weight: bold'
-                return colors
-
-            def ma_color(val):
-                if isinstance(val, (int, float)):
-                    if val >= 80: return 'background-color: rgba(255, 23, 68, 0.4); color: white'
-                    if val >= 55: return 'background-color: rgba(0, 200, 83, 0.3); color: white'
-                    if val <= 20: return 'background-color: rgba(170, 0, 255, 0.3); color: white'
-                return ''
-
-            styler = df.sort_values('Ngày', ascending=False).style
-            styler = styler.apply(vni_color, axis=1)
-            
-            if use_vni:
-                styler = styler.hide(subset=['VNI_Prev'], axis="columns")
-            
-            # Apply background to pct columns
-            pct_cols = [c for c in df_display.columns if '%' in c]
-            styler = styler.applymap(ma_color, subset=pct_cols)
-            
-            # Add % to pct columns
-            format_dict = {c: "{:.1f}%" for c in pct_cols}
-            styler = styler.format(format_dict)
-            return styler
-
-        st.dataframe(
-            make_styler(df_display),
-            hide_index=True,
-            use_container_width=True
-        )
-
-
-# ══════════════════════════════════════════════
-# ROW 4: Liquidity
-# ══════════════════════════════════════════════
-st.markdown('<div class="section-header">THANH KHOẢN THỊ TRƯỜNG</div>', unsafe_allow_html=True)
-
-fig_liq = charts.liquidity_chart(s['liq_history'])
-st.plotly_chart(fig_liq, use_container_width=True)
-
-
-# ══════════════════════════════════════════════
-# ROW 5: Market Power & VNINDEX
-# ══════════════════════════════════════════════
-st.markdown('<div class="section-header">MARKET SENTIMENT ANALYSIS (SUPPLY/DEMAND/POWER)</div>', unsafe_allow_html=True)
-
-col_power, col_vni = st.columns([1, 1])
-
-with col_power:
-    fig_power = charts.market_power_chart(s['power_hist'])
-    st.plotly_chart(fig_power, use_container_width=True)
-
-with col_vni:
-    fig_vni = charts.vnindex_chart(s['prices_raw'], lookback_days)
-    st.plotly_chart(fig_vni, use_container_width=True)
-
-
-# ══════════════════════════════════════════════
-# ROW 6: Advanced Analytics (RSI, PSY, Thrust)
-# ══════════════════════════════════════════════
-st.markdown('<div class="section-header">ADVANCED MARKET BREADTH ANALYTICS (MOMENTUM & PSYCHOLOGICAL)</div>', unsafe_allow_html=True)
-
-col_mom_psy, col_thrust = st.columns([1, 1])
-
-with col_mom_psy:
-    # Mặc định lấy RSI/PSY của MA20 (hoặc MA đầu tiên trong list)
-    p_ref = ma_periods[0]
-    fig_mom_psy = charts.rsi_psy_breadth_chart(s['adv_analytics'], period=p_ref)
-    st.plotly_chart(fig_mom_psy, use_container_width=True)
-
-with col_thrust:
-    fig_thrust = charts.breadth_thrust_chart(s['ad_history'])
-    st.plotly_chart(fig_thrust, use_container_width=True)
-
-
-# ══════════════════════════════════════════════
-# ROW 7: New High/Low + McClellan + Sentiment Radar
-# ══════════════════════════════════════════════
-st.markdown('<div class="section-header">BREADTH INDICATORS</div>', unsafe_allow_html=True)
-
-col_hl, col_mc, col_radar = st.columns([1, 2, 1])
-
-with col_hl:
-    fig_hl = charts.new_high_low_chart(s['hl_stats'])
-    st.plotly_chart(fig_hl, use_container_width=True)
+    # ── Market Status Banner ──────────────────────────────────────
+    pct_adv = ad['pct_advance']
+    dom_trend = "🟢 BULLISH" if pct_adv >= 55 else ("🔴 BEARISH" if pct_adv <= 40 else "🟡 NEUTRAL")
+    dom_color = "#00E676" if pct_adv >= 55 else ("#FF1744" if pct_adv <= 40 else "#FFD740")
+    hl_ratio  = hl.get('hl_ratio', 0)
 
     st.markdown(f"""
-    <div class="info-box">
-        <div style="font-size:0.75rem; color:#888">HỆ SỐ H/L</div>
-        <div style="font-size:1.5rem; font-weight:600; color:#00B4D8">{hl['hl_ratio']:.2f}</div>
-        <div style="font-size:0.8rem; color:#888">
-            {hl['new_highs']} highs · {hl['new_lows']} lows<br>
-            trên {hl['total']} mã phân tích
+    <div style="background:linear-gradient(135deg,rgba(0,180,216,0.05) 0%,rgba(0,212,255,0.02) 100%);
+                border:1px solid rgba(0,180,216,0.1); border-radius:12px;
+                padding:14px 22px; margin-bottom:16px; display:flex; align-items:center; gap:32px; flex-wrap:wrap;">
+        <div>
+            <div style="font-size:0.62rem;color:#4A6080;text-transform:uppercase;letter-spacing:2px;font-family:'JetBrains Mono',monospace;">Market Trend</div>
+            <div style="font-size:1.2rem;font-weight:700;color:{dom_color};margin-top:3px;">{dom_trend}</div>
+        </div>
+        <div style="width:1px;height:40px;background:rgba(255,255,255,0.05);"></div>
+        <div>
+            <div style="font-size:0.62rem;color:#4A6080;text-transform:uppercase;letter-spacing:2px;font-family:'JetBrains Mono',monospace;">Fear/Greed Score</div>
+            <div style="font-size:1.2rem;font-weight:700;color:{sentiment['color']};margin-top:3px;">{sentiment['score']:.0f} · {sentiment['label']}</div>
+        </div>
+        <div style="width:1px;height:40px;background:rgba(255,255,255,0.05);"></div>
+        <div>
+            <div style="font-size:0.62rem;color:#4A6080;text-transform:uppercase;letter-spacing:2px;font-family:'JetBrains Mono',monospace;">H/L Ratio (52W)</div>
+            <div style="font-size:1.2rem;font-weight:700;color:{'#00E676' if hl_ratio > 1 else '#FF1744'};margin-top:3px;">{hl_ratio:.2f}x &nbsp;<span style="font-size:0.8rem;color:#4A6080;">({hl['new_highs']} highs / {hl['new_lows']} lows)</span></div>
+        </div>
+        <div style="width:1px;height:40px;background:rgba(255,255,255,0.05);"></div>
+        <div>
+            <div style="font-size:0.62rem;color:#4A6080;text-transform:uppercase;letter-spacing:2px;font-family:'JetBrains Mono',monospace;">Volume Momentum</div>
+            <div style="font-size:1.2rem;font-weight:700;color:{'#00E676' if vol_mom > 1 else '#FF7043'};margin-top:3px;">{vol_mom:.2f}x &nbsp;<span style="font-size:0.8rem;color:#4A6080;">vs avg</span></div>
+        </div>
+        <div style="margin-left:auto;text-align:right;">
+            <div style="font-size:0.62rem;color:#4A6080;font-family:'JetBrains Mono',monospace;">Total Analyzed</div>
+            <div style="font-size:1.5rem;font-weight:700;color:#00D4FF;font-family:'JetBrains Mono',monospace;">{ad['total']:,}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-with col_mc:
-    fig_mc = charts.mcclellan_chart(s['mc_df'])
-    st.plotly_chart(fig_mc, use_container_width=True)
+    # ── KPI Row ────────────────────────────────────────────────
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    pct_dec = 100 - pct_adv - (ad['unchanged']/ad['total']*100 if ad['total'] else 0)
+    with k1: st.metric("🟢 Advance",     f"{ad['advances']:,}",      f"{pct_adv:.1f}%")
+    with k2: st.metric("🔴 Decline",     f"{ad['declines']:,}",      f"{pct_dec:.1f}%")
+    with k3: st.metric("⚪ Unchanged",   f"{ad['unchanged']:,}")
+    with k4: st.metric("📊 Total",       f"{ad['total']:,}")
+    with k5: st.metric("⬆️ 52W High",    f"{hl['new_highs']:,}",     delta=f"vs {hl['new_lows']} lows")
+    with k6: st.metric("💧 Volume Mom",  f"{vol_mom:.2f}x",          delta="↑ Higher" if vol_mom > 1.0 else "↓ Lower",
+                        delta_color="normal" if vol_mom > 1.0 else "inverse")
 
-with col_radar:
-    fig_radar = charts.sentiment_components_chart(sentiment['components'])
-    st.plotly_chart(fig_radar, use_container_width=True)
+    # ── Sentiment Row ─────────────────────────────────────────
+    st.markdown('<div class="section-header">SENTIMENT & ADVANCE/DECLINE</div>', unsafe_allow_html=True)
+    col_gauge, col_donut, col_adline = st.columns([1, 1, 2])
+    with col_gauge:
+        st.plotly_chart(charts.sentiment_gauge(sentiment['score'], sentiment['label'], sentiment['color']), use_container_width=True)
+        st.plotly_chart(charts.sentiment_history_chart(s['sentiment_history']), use_container_width=True)
+    with col_donut:
+        st.plotly_chart(charts.advance_decline_donut(ad), use_container_width=True)
+    with col_adline:
+        st.plotly_chart(charts.ad_line_chart(s['ad_history']), use_container_width=True)
 
+    # ── Market Breadth Depth Row ─────────────────────────────
+    st.markdown('<div class="section-header">MARKET BREADTH DEPTH</div>', unsafe_allow_html=True)
+    col_ma_bar, col_hl_bar = st.columns(2)
+    with col_ma_bar:
+        st.plotly_chart(charts.ma_above_bar(s['ma_stats']), use_container_width=True)
+    with col_hl_bar:
+        st.plotly_chart(charts.new_high_low_chart(hl), use_container_width=True)
 
-# ══════════════════════════════════════════════
-# ROW 8: Backtest Results (If triggered)
-# ══════════════════════════════════════════════
-if 'bt_results' in st.session_state and st.session_state.bt_results:
-    st.markdown('<div class="section-header">SIGNAL BACKTEST RESULTS: STOCHASTIC CROSSOVER</div>', unsafe_allow_html=True)
-    res = st.session_state.bt_results
-    ticker_name = st.session_state.bt_target
+    # ── Breadth & Power Row ──────────────────────────────────
+    st.markdown('<div class="section-header">MARKET BREADTH TRENDS & POWER INDEX</div>', unsafe_allow_html=True)
+    col_breadth, col_power = st.columns(2)
+    with col_breadth:
+        st.plotly_chart(charts.ma_breadth_history_chart(s['ma_history']), use_container_width=True)
+    with col_power:
+        st.plotly_chart(charts.market_power_chart(s['power_hist']), use_container_width=True)
+
+    # ── Advanced Breadth Row ─────────────────────────────────
+    st.markdown('<div class="section-header">ADVANCED BREADTH ANALYTICS</div>', unsafe_allow_html=True)
+    col_rsi_psy, col_thrust = st.columns(2)
+    with col_rsi_psy:
+        st.plotly_chart(charts.rsi_psy_breadth_chart(s['adv_analytics']), use_container_width=True)
+    with col_thrust:
+        st.plotly_chart(charts.breadth_thrust_chart(s['ad_history']), use_container_width=True)
+
+    # ── Leaders & Liquidity ──────────────────────────────────
+    st.markdown('<div class="section-header">MARKET LEADERS & MONEY FLOW</div>', unsafe_allow_html=True)
+    col_influence, col_top_flow = st.columns([3, 2])
+    with col_influence:
+        st.markdown("### 🏆 Index Influence (Leaders & Laggards)")
+        st.dataframe(s['index_influence'], use_container_width=True, hide_index=True)
+    with col_top_flow:
+        # Prepare Top Flow Data
+        liq_map = st.session_state.agg_liq_map
+        if liq_map:
+            top_liq_df = pd.DataFrame([{'Ticker': k, 'Value': v} for k, v in liq_map.items()])
+            top_liq_df = top_liq_df.sort_values('Value', ascending=False).head(10)
+            st.plotly_chart(charts.top_money_flow_chart(top_liq_df), use_container_width=True)
+        else:
+            st.info("💡 Run 'Refresh Liquidity' or 'Run Analysis' to see top stock flows.")
+
+    # ── Historical Summary Table ─────────────────────────────
+    st.markdown('<div class="section-header">MARKET HISTORY & BREADTH SUMMARY</div>', unsafe_allow_html=True)
     
-    # 1. Overview Metrics
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric("Total Return", f"{res['total_return']}%", delta=None)
-    with m2:
-        st.metric("Win Rate", f"{res['win_rate']}%", delta=None)
-    with m3:
-        st.metric("Total Trades", res['total_trades'])
-    with m4:
-        st.metric("Asset", ticker_name)
+    with st.spinner("📊 Compiling historical data..."):
+        # 1. Real-time Calculation (Today)
+        live_calc = calculator.compute_market_history_combined(
+            s['prices_raw'], 
+            ma_periods, 
+            lookback_days,
+            agg_results=st.session_state.get('agg_results', {})
+        )
         
-    # 2. Charts
-    tab_equity, tab_signals = st.tabs(["📈 Equity Curve", "📉 Stochastic Signal"])
+        # Take today from live_calc
+        if not live_calc.empty:
+            today_df = live_calc.iloc[[0]] 
+            # Save snapshot for EOD
+            fetcher.save_market_summary_snapshot(today_df)
+        else:
+            today_df = pd.DataFrame()
+        
+        # 3. Load history from file (Previous sessions)
+        persistent_history = fetcher.load_market_summary_history()
+        
+        # Merge: Today (Live) + All Past (File)
+        if not persistent_history.empty:
+            hist_df = pd.concat([today_df, persistent_history], ignore_index=True)
+            hist_df = hist_df.drop_duplicates(subset=['Date'], keep='first')
+        else:
+            hist_df = today_df
+
+        if not hist_df.empty:
+            hist_df = hist_df.sort_values('Date', ascending=False)
+            st.info(f"📁 Merged current session with {len(persistent_history)} historical records.")
+
+        if not hist_df.empty:
+            # Formatting logic
+            def color_change(val):
+                if pd.isna(val): return ""
+                color = "#00E676" if val > 0 else ("#FF1744" if val < 0 else "#888")
+                return f'color: {color}; font-weight: 600;'
+
+            def color_index(val, df_col):
+                if pd.isna(val) or df_col.empty: return ""
+                min_v, max_v = df_col.min(), df_col.max()
+                if max_v == min_v: return "background-color: rgba(0,212,255,0.1);"
+                alpha = 0.05 + 0.25 * (val - min_v) / (max_v - min_v)
+                return f'background-color: rgba(0,212,255,{alpha}); color: #E0F0FF; font-weight: 600;'
+            
+            def color_ma(val, df_col):
+                if pd.isna(val) or df_col.empty: return ""
+                min_v, max_v = df_col.min(), df_col.max()
+                if max_v == min_v: return ""
+                rel = (val - min_v) / (max_v - min_v)
+                if rel < 0.5:
+                    alpha = 0.3 * (1 - rel*2)
+                    return f'background-color: rgba(255,23,68,{alpha});'
+                else:
+                    alpha = 0.3 * (rel-0.5)*2
+                    return f'background-color: rgba(0,230,118,{alpha});'
+
+            def color_sd(val):
+                if pd.isna(val) or val == 0: return ""
+                alpha = min(0.6, abs(val) / 200)
+                if val > 0:
+                    return f'background-color: rgba(0,230,118,{alpha}); color: #E0F0FF; font-weight: 600;'
+                else:
+                    return f'background-color: rgba(255,23,68,{alpha}); color: #E0F0FF; font-weight: 600;'
+
+            def color_rsi(val):
+                if pd.isna(val) or val == 0: return ""
+                if val >= 70: return 'background-color: rgba(255,23,68,0.2); color: #FF1744; font-weight: 700;'
+                if val <= 30: return 'background-color: rgba(0,230,118,0.2); color: #00E676; font-weight: 700;'
+                return 'color: #C8D8E8;'
+
+            # Apply styler
+            styler = hist_df.style.format({
+                'Change': '{:+.2f}',
+                'VNINDEX': '{:,.2f}',
+                'RSI': '{:.1f}',
+                'Net S/D': '{:,.1f}M',
+                'Demand (M)': '{:,.1f}M',
+                'Supply (M)': '{:,.1f}M',
+                'Power': '{:+.2f}'
+            })
+            
+            styler = styler.applymap(color_change, subset=['Change', 'Power'])
+            styler = styler.apply(lambda x: [color_index(v, x) for v in x], subset=['VNINDEX'])
+            if 'RSI' in hist_df.columns:
+                styler = styler.applymap(color_rsi, subset=['RSI'])
+            for p in ma_periods:
+                ma_col = f'MA{p}'
+                if ma_col in hist_df.columns:
+                    styler = styler.apply(lambda x: [color_ma(v, x) for v in x], subset=[ma_col])
+            
+            if 'Net S/D' in hist_df.columns:
+                styler = styler.applymap(color_sd, subset=['Net S/D'])
+            
+            if 'Demand (M)' in hist_df.columns:
+                styler = styler.applymap(lambda v: 'color: #00E676; font-weight: 500;' if v > 0 else '', subset=['Demand (M)'])
+            if 'Supply (M)' in hist_df.columns:
+                styler = styler.applymap(lambda v: 'color: #FF1744; font-weight: 500;' if v > 0 else '', subset=['Supply (M)'])
+
+            if 'Notes' in hist_df.columns:
+                styler = styler.applymap(lambda v: 'color: #FFD740; font-weight: 700;' if any(x in str(v) for x in ['PUMP', 'CRASH', 'RSI', 'STRONG']) else '', subset=['Notes'])
+
+            st.dataframe(
+                styler,
+                use_container_width=True,
+                height=500,
+                hide_index=True
+            )
+            st.caption("💡 History: MA (number of stocks above MA), Net S/D (Million shares), Auto-notes based on Index & Breadth.")
+        else:
+            st.warning("⚠️ Insufficient data for historical table.")
+
+    # ── Market Momentum & Distribution ───────────────────────
+    st.markdown('<div class="section-header">MARKET MOMENTUM & DISTRIBUTION</div>', unsafe_allow_html=True)
+    c_mc, c_dist, c_radar = st.columns([2, 2, 1])
+    with c_mc:
+        st.plotly_chart(charts.mcclellan_chart(s['mc_df']), use_container_width=True)
+    with c_dist:
+        st.plotly_chart(charts.change_distribution_chart(s['dist_data']), use_container_width=True)
+    with c_radar:
+        st.plotly_chart(charts.sentiment_components_chart(sentiment['components']), use_container_width=True)
+
+    # ── International (VIX) Row ──────────────────────────────
+    st.markdown('<div class="section-header">GLOBAL FEAR INDEX (VIX)</div>', unsafe_allow_html=True)
+    try:
+        vix_df = fetcher.fetch_vix()
+        if not vix_df.empty:
+            st.plotly_chart(charts.vix_chart(vix_df), use_container_width=True)
+        else:
+            st.warning("Could not fetch VIX data from LiteFinance. Check API status.")
+    except Exception as e:
+        st.error(f"VIX Display Error: {e}")
+
+
+# ─────────────────────────────────────────────
+# TAB 2: PHÂN TÍCH CỔ PHIẾU (SINGLE STOCK)
+# ─────────────────────────────────────────────
+with tabs[1]:
+    st.markdown('<div class="section-header">TECHNICAL STOCK ANALYSIS</div>', unsafe_allow_html=True)
     
-    with tab_equity:
-        fig_equity = charts.backtest_equity_chart(res)
-        st.plotly_chart(fig_equity, use_container_width=True)
-        
-    with tab_signals:
-        # Lấy dữ liệu raw của ticker để vẽ signal
-        t_data = s['prices_raw'].get(ticker_name, {})
-        if t_data:
-            # Reconstruct DataFrame for chart
-            df_t = pd.DataFrame({
-                'close': t_data['close'],
-                'high': t_data['high'],
-                'low': t_data['low']
-            }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
-            df_stoch = calculator.compute_stochastic(df_t)
-            fig_stoch = charts.stochastic_chart(df_stoch, ticker_name)
-            st.plotly_chart(fig_stoch, use_container_width=True)
+    # Ticker Selection
+    all_tickers = tk.get_tickers("ALL")
+    selected_ticker = st.selectbox("Select Ticker", options=all_tickers, index=all_tickers.index("SSI") if "SSI" in all_tickers else 0)
     
-    # 3. Trade List
-    if res['trades']:
-        with st.expander("📜 Chi tiết lịch sử lệnh"):
-            df_trades = pd.DataFrame(res['trades'])
-            df_trades['pnl'] = (df_trades['pnl'] * 100).map("{:.2f}%".format)
-            st.dataframe(df_trades, use_container_width=True, hide_index=True)
+    if selected_ticker:
+        with st.spinner(f"⏳ Loading analysis for {selected_ticker}..."):
+            # Fetch data for technical analysis
+            ta_start = (date.today() - timedelta(days=365)).strftime('%Y-%m-%d')
+            raw_ta = fetcher.batch_fetch([selected_ticker], ta_start, date.today().strftime('%Y-%m-%d'))
+            dict_ta = fetcher.parse_results(raw_ta)
+            
+            if selected_ticker in dict_ta:
+                t_data = dict_ta[selected_ticker]
+                df_ta = pd.DataFrame({
+                    'open': t_data['open'],
+                    'high': t_data['high'],
+                    'low': t_data['low'],
+                    'close': t_data['close'],
+                    'volume': t_data['volume']
+                }, index=pd.to_datetime([datetime.fromtimestamp(t) for t in t_data['timestamps']]))
+                
+                # Calculate indicators
+                df_ta['MA20'] = df_ta['close'].rolling(20).mean()
+                df_ta['MA50'] = df_ta['close'].rolling(50).mean()
+                bb = calculator.compute_bollinger_bands(df_ta['close'])
+                df_ta['bb_upper'] = bb['upper']
+                df_ta['bb_lower'] = bb['lower']
+                
+                # Render Professional Chart
+                st.plotly_chart(charts.professional_candlestick_chart(df_ta, selected_ticker), use_container_width=True)
+                
+                # Render MACD Chart
+                df_macd = calculator.compute_macd(df_ta['close'])
+                st.plotly_chart(charts.macd_chart(df_macd), use_container_width=True)
+                
+                # Render Money Flow Indicators
+                mfi = calculator.compute_mfi(df_ta)
+                obv = calculator.compute_obv(df_ta)
+                vwap = calculator.compute_vwap(df_ta)
+                st.plotly_chart(charts.single_stock_money_flow_chart(df_ta, mfi, obv, vwap), use_container_width=True)
+                
+                # Stats Metrics
+                c1, c2, c3, c4 = st.columns(4)
+                last_price = df_ta['close'].iloc[-1]
+                prev_price = df_ta['close'].iloc[-2]
+                chg = (last_price - prev_price) / prev_price * 100
+                with c1: st.metric("Current Price", f"{last_price:,.1f}", f"{chg:+.2f}%")
+                with c2: st.metric("RSI (14)", f"{calculator.compute_rsi(df_ta['close']).iloc[-1]:.1f}")
+                with c3: st.metric("MA20", f"{df_ta['MA20'].iloc[-1]:,.1f}", delta=f"{((last_price/df_ta['MA20'].iloc[-1])-1)*100:+.1f}%")
+                with c4: st.metric("Volume", f"{df_ta['volume'].iloc[-1]/1e6:.1f}M")
+                
+                # ── Aggressive Trading Analysis ──────────────────────
+                st.markdown('<div class="section-header">LIQUIDITY & AGGRESSIVE TRADING (REAL-TIME)</div>', unsafe_allow_html=True)
+                
+                agg_data = fetcher.fetch_aggressive_trading(selected_ticker)
+                # Đảm bảo agg_data là list và không trống
+                if isinstance(agg_data, list) and len(agg_data) > 0:
+                    agg_stats = calculator.compute_aggressive_stats(agg_data)
+                    
+                    # Layout metrics
+                    m1, m2, m3, m4 = st.columns(4)
+                    with m1:
+                        st.metric("Total Turnover", f"{agg_stats['total_value_bn']:,.2f} Bn", help="Total traded value calculated from executed price levels")
+                    with m2:
+                        st.metric("Aggressive Buying", f"{agg_stats['buy_value']/1e9:,.2f} Bn", delta=f"{agg_stats['buy_volume']/1e6:,.1f}M shares", delta_color="normal")
+                    with m3:
+                        st.metric("Aggressive Selling", f"{agg_stats['sell_value']/1e9:,.2f} Bn", delta=f"-{agg_stats['sell_volume']/1e6:,.1f}M shares", delta_color="inverse")
+                    with m4:
+                        net_val = agg_stats['net_value_bn']
+                        st.metric("Net Flow", f"{net_val:+.2f} Bn", delta="Demand > Supply" if net_val > 0 else "Supply > Demand", delta_color="normal" if net_val > 0 else "inverse")
+                    
+                    # Price Level Table
+                    expected_cols = ['Price', 'TotalVolume', 'AggressiveBuyingVolume', 'AggressiveSellingVolume', 'OtherVolume']
+                    
+                    # Trích xuất list từ dict {"data": [...]}
+                    agg_list = agg_data.get('data', []) if isinstance(agg_data, dict) else agg_data
+                    df_agg = pd.DataFrame(agg_list)
+                    
+                    # Kiểm tra xem có đủ cột cần thiết không
+                    if not df_agg.empty and all(c in df_agg.columns for c in expected_cols):
+                        with st.expander("Price Level Trade Details"):
+                            df_agg = df_agg[expected_cols]
+                            df_agg.columns = ['Price', 'Total Vol', 'Agg Buy', 'Agg Sell', 'Others']
+                            df_agg = df_agg.sort_values('Price', ascending=False)
+                            st.dataframe(df_agg.style.format({
+                                'Price': '{:,.0f}',
+                                'Total Vol': '{:,.0f}',
+                                'Agg Buy': '{:,.0f}',
+                                'Agg Sell': '{:,.0f}',
+                                'Others': '{:,.0f}'
+                            }), use_container_width=True, hide_index=True)
+                    else:
+                        st.warning("⚠️ Detailed trade data format incorrect.")
+                else:
+                    st.info("💡 Information: Aggressive trade data will appear when the market is open.")
+            else:
+                st.error(f"❌ No data found for symbol {selected_ticker}")
 
-
-# ══════════════════════════════════════════════
-# ROW 9: Scanner Results
-# ══════════════════════════════════════════════
-if st.session_state.scanner_results is not None:
-    st.markdown('<div class="section-header">VN30 STOCHASTIC SCANNER & PERFORMANCE SUMMARY</div>', unsafe_allow_html=True)
-    df_scan = st.session_state.scanner_results
-    
-    def style_scanner(row):
-        cols = [''] * len(row)
-        sig_idx = row.index.get_loc('Tín hiệu hiện tại')
-        wr_idx = row.index.get_loc('Win Rate')
-        rec_idx = row.index.get_loc('Khuyến nghị')
+    # ── Stochastic Backtest Results (If exists for selected ticker) ──
+    if st.session_state.bt_results and st.session_state.bt_target == selected_ticker:
+        st.markdown("---")
+        st.markdown(f'<div class="section-header">STOCHASTIC BACKTEST RESULTS: {selected_ticker}</div>', unsafe_allow_html=True)
         
-        # Color for Signal
-        if "BUY" in str(row['Tín hiệu hiện tại']): cols[sig_idx] = 'color: #00E676; font-weight: bold'
-        elif "SELL" in str(row['Tín hiệu hiện tại']): cols[sig_idx] = 'color: #FF1744; font-weight: bold'
+        res = st.session_state.bt_results
         
-        # Color for Recommendation
-        rec = str(row['Khuyến nghị'])
-        if "MUA MẠNH" in rec: cols[rec_idx] = 'background-color: rgba(0, 230, 118, 0.4); color: white; font-weight: bold'
-        elif "MUA" in rec: cols[rec_idx] = 'background-color: rgba(0, 230, 118, 0.15); color: #00E676'
-        elif "BÁN MẠNH" in rec: cols[rec_idx] = 'background-color: rgba(255, 23, 68, 0.4); color: white; font-weight: bold'
-        elif "BÁN" in rec: cols[rec_idx] = 'background-color: rgba(255, 23, 68, 0.15); color: #FF1744'
-        elif "Theo dõi" in rec: cols[rec_idx] = 'color: #FFD740; font-style: italic'
-        
-        wr_val = float(str(row['Win Rate']).replace('%', ''))
-        if wr_val > 60: cols[wr_idx] = 'color: #00E676; font-weight: bold'
-        elif wr_val < 45: cols[wr_idx] = 'color: #FF1744'
-        
-        return cols
-
-    st.dataframe(
-        df_scan.style.apply(style_scanner, axis=1),
-        use_container_width=True,
-        hide_index=True
-    )
-
-
-# ══════════════════════════════════════════════
-# ROW 10: AI Backtest Results
-# ══════════════════════════════════════════════
-if st.session_state.ai_results:
-    st.markdown('<div class="section-header">🤖 AI MULTI-FACTOR PREDICTION & BACKTEST</div>', unsafe_allow_html=True)
-    res_ai = st.session_state.ai_results
-    ai_target = st.session_state.ai_target
-
-    st.markdown("""
-    <div style="background: rgba(0, 180, 216, 0.15); border-left: 4px solid #00B4D8; padding: 10px 14px; margin-bottom: 12px; border-radius: 4px; font-size: 0.9rem;">
-        <b>🧠 Mô hình AI:</b> Ensemble <b>XGBoost</b> + <b>RandomForest</b> • Features: kỹ thuật + vĩ mô + hàng hóa + khối ngoại
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if 'summary' in res_ai:
-        st.warning(res_ai['summary'])
-    else:
+        # Performance Metrics
         m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.metric("AI Total Return", f"{res_ai['total_return']}%")
-        with m2:
-            st.metric("Win Rate", f"{res_ai['win_rate']}%")
-        with m3:
-            st.metric("Total Trades", res_ai['total_trades'])
-        with m4:
-            st.metric("Asset", ai_target)
-            
-        st.info(f"💡 {res_ai.get('train_info', '')}")
+        m1.metric("Total Return", f"{res['total_return']:.2f}%")
+        m2.metric("Win Rate", f"{res['win_rate']:.1f}%")
+        m3.metric("Total Trades", res['total_trades'])
+        m4.metric("Avg PnL/Trade", f"{res['avg_pnl']:.2f}%")
         
-        tab_ai_eq, tab_ai_trades = st.tabs(["📈 Equity Curve", "📜 Trade List"])
+        # Equity Curve
+        st.plotly_chart(charts.backtest_equity_chart(res), use_container_width=True)
         
-        with tab_ai_eq:
-            fig_ai_eq = charts.backtest_equity_chart(res_ai, title=f"AI Backtest Equity: {ai_target}")
-            st.plotly_chart(fig_ai_eq, use_container_width=True)
-            
-        with tab_ai_trades:
-            if res_ai['trades']:
-                df_ai_trades = pd.DataFrame(res_ai['trades'])
-                df_ai_trades['pnl'] = (df_ai_trades['pnl'] * 100).map("{:.2f}%".format)
-                st.dataframe(df_ai_trades, use_container_width=True, hide_index=True)
+        # Trade History Table
+        with st.expander("Detailed Trade History"):
+            if res['trades']:
+                trades_df = pd.DataFrame(res['trades'])
+                # Format trades table
+                trades_df['entry_price'] = trades_df['entry_price'].map('{:,.2f}'.format)
+                trades_df['exit_price'] = trades_df['exit_price'].map('{:,.2f}'.format)
+                trades_df['pnl'] = (trades_df['pnl'] * 100).map('{:+.2f}%'.format)
+                st.dataframe(trades_df, use_container_width=True, hide_index=True)
 
-# ══════════════════════════════════════════════
-# ROW 11: AI Scanner Results
-# ══════════════════════════════════════════════
-if st.session_state.ai_scan_results is not None:
-    st.markdown('<div class="section-header">🤖 AI VN30 OPPORTUNITY SCANNER (MULTI-FACTOR)</div>', unsafe_allow_html=True)
-    df_ai_scan = st.session_state.ai_scan_results
 
-    # Hiển thị mô hình AI đang sử dụng
-    st.markdown("""
-    <div style="background: rgba(0, 180, 216, 0.15); border-left: 4px solid #00B4D8; padding: 10px 14px; margin-bottom: 12px; border-radius: 4px; font-size: 0.9rem;">
-        <b>🧠 Mô hình AI đang sử dụng:</b> Ensemble <b>XGBoost</b> + <b>RandomForest</b><br>
-        <span style="color:#888; font-size:0.85rem">Features: RSI, MA20/50, volatility, momentum, vàng, dầu, DXY, lãi suất Mỹ, nông sản, phân bón, khối ngoại • Ngưỡng BUY/SELL: 60%</span>
-    </div>
-    """, unsafe_allow_html=True)
+# ─────────────────────────────────────────────
+# TAB 3: TRÌNH QUÉT (SCANNERS)
+# ─────────────────────────────────────────────
+with tabs[2]:
+    st.markdown('<div class="section-header">STOCK SIGNAL SCANNERS</div>', unsafe_allow_html=True)
     
-    # Cơ hội BUY
-    buy_list = df_ai_scan[df_ai_scan['Tín hiệu'] == 2]['Mã'].tolist()
-    if buy_list:
-        st.success(f"🔥 **Cơ hội tiềm năng (BUY):** {', '.join(buy_list)}")
+    if st.session_state.scanner_results is not None:
+        st.markdown("### 📊 Stochastic Signal Scanner (VN100)")
+        df_scan = st.session_state.scanner_results
+        
+        # Styling the scanner table
+        def color_signal(val):
+            if 'BUY' in str(val): return 'background-color: rgba(0, 230, 118, 0.2); color: #00E676; font-weight: 700;'
+            if 'SELL' in str(val): return 'background-color: rgba(255, 23, 68, 0.2); color: #FF1744; font-weight: 700;'
+            return ''
+            
+        st.dataframe(
+            df_scan.style.applymap(color_signal, subset=['Signal', 'Recommendation']),
+            use_container_width=True,
+            height=600,
+            hide_index=True
+        )
     else:
-        st.info("💡 Chưa tìm thấy cơ hội mua mạnh trong VN30 hiện tại theo mô hình AI.")
+        st.info("💡 Click **'Scan VN30 Signals'** in the sidebar to run the Stochastic scanner.")
+
+# ─────────────────────────────────────────────
+# TAB 4: AI ENGINE
+# ─────────────────────────────────────────────
+with tabs[3]:
+    st.markdown('<div class="section-header">AI MULTI-FACTOR ANALYSIS</div>', unsafe_allow_html=True)
     
-    # Top mã có khả năng lợi nhuận cao (đã sắp xếp theo Lợi nhuận dự báo giảm dần)
-    top5 = df_ai_scan.head(5)
-    top5_str = ", ".join([f"{r['Mã']} ({r['Lợi nhuận dự báo (%)']})" for _, r in top5.iterrows()])
-    st.info(f"📈 **Top 5 khả năng lợi nhuận cao:** {top5_str}")
-
-    # Chi tiết điều kiện từng mã (expander cho trực quan)
-    with st.expander("📋 **Chi tiết điều kiện đáp ứng theo mã**", expanded=False):
-        for _, row in df_ai_scan.iterrows():
-            cond = row.get('Điều kiện đáp ứng', '')
-            if pd.isna(cond) or not str(cond).strip():
-                continue
-            sig_label = "🟢" if row['Tín hiệu'] == 2 else ("🔴" if row['Tín hiệu'] == 0 else "🟡")
-            wl = row.get('Win/Loss', '-')
-            st.markdown(f"**{sig_label} {row['Mã']}** — {row['Dự báo AI']} | LN dự báo: {row['Lợi nhuận dự báo (%)']} | Win/Loss: {wl}")
-            for line in str(cond).strip().split("\n"):
-                st.markdown(f"- {line}")
-            st.markdown("---")
-
-    def style_ai_scanner(row):
-        cols = [''] * len(row)
-        sig_idx = row.index.get_loc('Dự báo AI')
-        ret_idx = row.index.get_loc('Lợi nhuận dự báo (%)')
-        wl_idx = row.index.get_loc('Win/Loss')
+    # ── AI Scanner Results ──
+    if st.session_state.ai_scan_results is not None:
+        st.markdown("### 🔍 AI VN100 Scanner Results")
+        ai_df = st.session_state.ai_scan_results
         
-        if row['Tín hiệu'] == 2: 
-            cols[sig_idx] = 'background-color: rgba(0, 230, 118, 0.4); color: white; font-weight: bold'
-            cols[ret_idx] = 'color: #00E676; font-weight: bold'
-        elif row['Tín hiệu'] == 0: 
-            cols[sig_idx] = 'background-color: rgba(255, 23, 68, 0.4); color: white; font-weight: bold'
-            cols[ret_idx] = 'color: #FF1744'
-        # Màu Win/Loss: xanh nếu ≥60%, đỏ nếu <40%
-        wl_val = str(row.get('Win/Loss', ''))
-        if wl_val != '-' and '%' in wl_val:
-            try:
-                pct = float(wl_val.split('%')[0])
-                if pct >= 60: cols[wl_idx] = 'color: #00E676; font-weight: bold'
-                elif pct < 40: cols[wl_idx] = 'color: #FF1744'
-            except ValueError:
-                pass
-        return cols
+        def color_ai(val):
+            if 'BUY' in str(val): return 'background-color: rgba(0, 230, 118, 0.2); color: #00E676; font-weight: 700;'
+            if 'SELL' in str(val): return 'background-color: rgba(255, 23, 68, 0.2); color: #FF1744; font-weight: 700;'
+            return ''
 
-    st.dataframe(
-        df_ai_scan.style.apply(style_ai_scanner, axis=1).hide(subset=['Tín hiệu'], axis='columns'),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Điều kiện đáp ứng": st.column_config.TextColumn("Điều kiện đáp ứng", width="large", help="Các điều kiện cổ phiếu đáp ứng")
-        }
-    )
+        st.dataframe(
+            ai_df.style.applymap(color_ai, subset=['AI Forecast']),
+            use_container_width=True,
+            height=600,
+            hide_index=True
+        )
+    
+    # ── AI Individual Results ──
+    if st.session_state.get('ai_results') is not None:
+        st.markdown("---")
+        target = st.session_state.get('ai_target', 'Unknown')
+        st.markdown(f"### 🤖 AI Individual Analysis: {target}")
+        ai_res = st.session_state.ai_results
+        
+        # Display AI metrics
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Predicted Return", f"{ai_res.get('predicted_return', 0):+.2f}%")
+        c2.metric("Model Accuracy", f"{ai_res.get('accuracy', 0)*100:.1f}%")
+        c3.metric("Signal", ai_res.get('signal', 'HOLD'))
+        c4.metric("Sharpe Ratio", f"{ai_res.get('sharpe_ratio', 0):.2f}")
+        
+        # Feature Importance or other AI charts
+        if 'importance_fig' in ai_res:
+             st.plotly_chart(ai_res['importance_fig'], use_container_width=True)
 
+    if st.session_state.ai_scan_results is None and st.session_state.get('ai_results') is None:
+        st.info("💡 Run **'AI Multi-Factor Analysis'** or **'AI VN100 Scanner'** from the sidebar to see AI insights.")
 
-# ══════════════════════════════════════════════
+# ─────────────────────────────────────────────
+# TAB 5: TOOLS
+# ─────────────────────────────────────────────
+with tabs[4]:
+    st.markdown('<div class="section-header">INVESTMENT TOOLS</div>', unsafe_allow_html=True)
+    
+    col_calc1, col_calc2 = st.columns(2)
+    with col_calc1:
+        st.markdown("### ⚖️ Position Sizing Calculator")
+        capital = st.number_input("Total Capital (VND)", value=100000000, step=10000000)
+        risk_pct = st.slider("Risk per Trade (%)", 1.0, 5.0, 2.0, 0.5)
+        entry_p = st.number_input("Entry Price (VND)", value=30000, step=100)
+        stop_l = st.number_input("Stop Loss (VND)", value=28500, step=100)
+        
+        if entry_p > stop_l:
+            risk_per_share = entry_p - stop_l
+            max_risk_amt = capital * (risk_pct / 100)
+            shares = int(max_risk_amt / risk_per_share)
+            total_val = shares * entry_p
+            
+            st.success(f"""
+            **Calculation Results:**
+            - Shares to buy: **{shares:,}**
+            - Total Investment Value: **{total_val:,} VND**
+            - Capital Allocation Ratio: **{total_val/capital*100:.1f}%**
+            """)
+        else:
+            st.warning("Stop Loss must be lower than Entry Price.")
+
+    with col_calc2:
+        st.markdown("### 💹 Expected ROI")
+        shares_owned = st.number_input("Quantity Owned", value=1000, step=100)
+        avg_price = st.number_input("Average Price", value=30000, step=100)
+        target_p = st.number_input("Target Price", value=35000, step=100)
+        
+        profit = (target_p - avg_price) * shares_owned
+        profit_pct = (target_p / avg_price - 1) * 100
+        st.info(f"""
+        **If target price is reached:**
+        - Expected Profit: **{profit:,} VND**
+        - Return Rate: **{profit_pct:+.1f}%**
+        """)
+
+# ─────────────────────────────────────────────
 # Footer
-# ══════════════════════════════════════════════
+# ─────────────────────────────────────────────
 st.markdown("---")
-st.markdown(f"""
-<div style="text-align:center; color:#444; font-size:0.75rem; padding: 8px;">
-    VN Market Dashboard  · 
-    Cập nhật: {datetime.now().strftime('%d/%m/%Y %H:%M')} · 
-    Sàn: <b style="color:#00B4D8">{st.session_state.get('exchange', exchange)}</b> · 
-    Mã phân tích: <b style="color:#00B4D8">{s['total_tickers']:,}</b>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(f'<div style="text-align:center; color:#444; font-size:0.75rem;">VN Market Dashboard • {datetime.now().strftime("%d/%m/%Y %H:%M")}</div>', unsafe_allow_html=True)

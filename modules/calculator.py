@@ -14,6 +14,28 @@ except ImportError:
 
 
 # ─────────────────────────────────────────────
+# Thống kê Dòng tiền (Money Flow)
+# ─────────────────────────────────────────────
+
+SECTOR_MAP = {
+    'Banking': ['VCB', 'BID', 'CTG', 'TCB', 'MBB', 'VPB', 'ACB', 'HDB', 'LPB', 'TPB', 'MSB', 'STB', 'OCB', 'VIB', 'SSB', 'NAB', 'EIB'],
+    'Real Estate': ['VIC', 'VHM', 'VRE', 'NVL', 'PDR', 'DIG', 'DXG', 'NLG', 'KBC', 'KDH', 'HDC', 'CEO', 'L14', 'IDC', 'SZC', 'VGC'],
+    'Financial Services': ['SSI', 'VND', 'VCI', 'HCM', 'SHS', 'FTS', 'BSI', 'ORS', 'VIX', 'CTS', 'AGR', 'MBS', 'VDS'],
+    'Steel': ['HPG', 'HSG', 'NKG', 'VGS', 'TVN'],
+    'Oil & Gas': ['GAS', 'PVD', 'PVS', 'PVT', 'BSR', 'PLX', 'OIL'],
+    'Industrial Zones': ['IDC', 'KBC', 'SZC', 'VGC', 'LH', 'TIP', 'D2D'],
+    'Public Investment': ['HHV', 'VCG', 'LCG', 'FCN', 'C4G', 'HT1', 'BCC'],
+    'Retail': ['MWG', 'FRT', 'DGW', 'PET', 'MSN', 'PNJ'],
+    'Technology': ['FPT', 'CMG', 'ELC', 'ITD']
+}
+# ─────────────────────────────────────────────
+# Helper
+# ─────────────────────────────────────────────
+def is_index_ticker(ticker: str) -> bool:
+    """Kiểm tra xem ticker có phải là chỉ số thị trường không"""
+    return ticker in ['VNINDEX', 'HNXINDEX', 'UPINDEX', 'VN30', 'VN100', 'HNX30']
+
+# ─────────────────────────────────────────────
 # MA Analysis
 # ─────────────────────────────────────────────
 
@@ -32,6 +54,8 @@ def compute_ma_stats(prices_dict: dict, periods: list = [20, 50, 200]) -> dict:
     for period in periods:
         above = below = total = 0
         for ticker, data in prices_dict.items():
+            if is_index_ticker(ticker):
+                continue
             closes = data.get('close', [])
             if len(closes) >= period + 1:
                 ma = float(np.mean(closes[-period:]))
@@ -203,16 +227,37 @@ def compute_advanced_analytics(ma_history: pd.DataFrame) -> pd.DataFrame:
     """
     Tính toán RSI và PSY cho các đường Breadth (ví dụ % Above MA20)
     """
-    if ma_history.empty: return pd.DataFrame()
-    
+    if ma_history.empty:
+        return pd.DataFrame()
+
     df = ma_history.copy()
-    # Tính RSI cho các cột % MA
     for col in df.columns:
         if col.startswith('pct_ma'):
             df[f'rsi_{col}'] = compute_rsi(df[col], period=14)
             df[f'psy_{col}'] = compute_psy(df[col], period=12)
-            
+
     return df
+
+
+def compute_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal_period: int = 9) -> pd.DataFrame:
+    """Tính MACD (Moving Average Convergence Divergence)"""
+    exp1 = series.ewm(span=fast, adjust=False).mean()
+    exp2 = series.ewm(span=slow, adjust=False).mean()
+    macd = exp1 - exp2
+    signal = macd.ewm(span=signal_period, adjust=False).mean()
+    hist = macd - signal
+    return pd.DataFrame({'macd': macd, 'signal': signal, 'hist': hist})
+
+
+def compute_bollinger_bands(series: pd.Series, period: int = 20, std_dev: int = 2) -> pd.DataFrame:
+    """Tính Bollinger Bands (BBands)"""
+    sma = series.rolling(window=period).mean()
+    std = series.rolling(window=period).std()
+    upper = sma + (std * std_dev)
+    lower = sma - (std * std_dev)
+    return pd.DataFrame({'middle': sma, 'upper': upper, 'lower': lower})
+
+
 
 
 # ─────────────────────────────────────────────
@@ -237,6 +282,8 @@ def compute_advance_decline(prices_dict: dict) -> dict:
     advances = declines = unchanged = 0
 
     for ticker, data in prices_dict.items():
+        if is_index_ticker(ticker):
+            continue
         chg = data.get('change_pct', 0)
         if chg > 0.01:
             advances += 1
@@ -315,6 +362,8 @@ def compute_new_high_low(prices_dict: dict, period_weeks: int = 52) -> dict:
     new_highs = new_lows = total = 0
 
     for ticker, data in prices_dict.items():
+        if is_index_ticker(ticker):
+            continue
         closes = data.get('close', [])
         if len(closes) >= 20:  # cần ít nhất 20 ngày
             window = closes[-min(trading_days, len(closes)):]
@@ -379,30 +428,69 @@ def compute_liquidity_history(prices_dict: dict, lookback: int = 60) -> pd.DataF
     return df
 
 
-def filter_by_liquidity(prices_dict: dict, min_value_bn: float = 0.0, days: int = 20) -> dict:
+def filter_by_liquidity(prices_dict: dict, min_value_bn: float = 0.0, days: int = 20, mode: str = 'mean', **kwargs) -> dict:
     """
-    Lọc danh sách tickers theo GTGD trung bình `days` phiên gần nhất
+    Lọc danh sách tickers theo GTGD (Giá trị giao dịch)
     min_value_bn: Tỷ VNĐ
+    mode: 'mean', 'median', 'min', 'last'
     """
     if min_value_bn <= 0:
         return prices_dict
 
     filtered = {}
+    
+    # 1. Nếu có aggressive liquidity map, ưu tiên dùng cái này để lọc
+    # (vì dữ liệu aggressive phản ánh chính xác GTGD thực tế của phiên hiện tại)
+    agg_liq_map = kwargs.get('agg_liq_map', {})
+
     for ticker, data in prices_dict.items():
         # Luôn giữ các chỉ số index
-        if ticker in ['VNINDEX', 'HNXINDEX', 'UPINDEX', 'VN30', 'HNX30']:
+        if is_index_ticker(ticker):
             filtered[ticker] = data
             continue
-
-        closes  = data.get('close', [])
-        volumes = data.get('volume', [])
-        
-        n = min(len(closes), len(volumes), days)
-        if n > 0:
-            # Giá (nghìn đồng) * Khối lượng / 1.000.000 = Tỷ đồng
-            avg_val = np.mean([closes[i] * volumes[i] for i in range(-n, 0)])
-            if avg_val / 1e6 >= min_value_bn:
+            
+        # Ưu tiên lấy từ cache aggressive
+        if ticker in agg_liq_map:
+            metric = agg_liq_map[ticker]
+            data['avg_liquidity_bn'] = metric
+            if metric >= min_value_bn:
                 filtered[ticker] = data
+            continue
+            
+        # Nếu không có trong cache, tính từ dữ liệu lịch sử
+        closes = np.array(data.get('close', []))
+        volumes = np.array(data.get('volume', []))
+        
+        # Đảm bảo có đủ dữ liệu
+        n = min(len(closes), len(volumes), days)
+        if n < 1:
+            continue
+
+        # Lấy n phiên gần nhất
+        c_recent = closes[-n:]
+        v_recent = volumes[-n:]
+        
+        # Giá trị giao dịch từng phiên (tỷ đồng): (Giá_1000đ * Khối_lượng) / 10^6
+        # VPS API trả giá dạng đơn vị 1000đ (ví dụ: 30.2 = 30,200 VNĐ)
+        daily_values = (c_recent * v_recent) / 1e6
+        
+        metric = 0.0
+        if mode == 'mean':
+            metric = np.mean(daily_values)
+        elif mode == 'median':
+            metric = np.median(daily_values)
+        elif mode == 'min':
+            metric = np.min(daily_values)
+        elif mode == 'last':
+            metric = daily_values[-1]
+        else:
+            metric = np.mean(daily_values)
+
+        if metric >= min_value_bn:
+            # Lưu lại giá trị thanh khoản để hiển thị sau này if needed
+            data['avg_liquidity_bn'] = metric
+            filtered[ticker] = data
+            
     return filtered
 
 
@@ -414,6 +502,8 @@ def compute_volume_momentum(prices_dict: dict, short: int = 5, long: int = 20) -
     """
     ratios = []
     for ticker, data in prices_dict.items():
+        if is_index_ticker(ticker):
+            continue
         vols = data.get('volume', [])
         if len(vols) >= long:
             sma_short = np.mean(vols[-short:])
@@ -662,7 +752,7 @@ def run_backtest_stochastic(
             position = None
 
     if not trades:
-        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': "Không có lệnh nào được thực hiện"}
+        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': "No trades executed"}
 
     # Tính toán performance
     df_trades = pd.DataFrame(trades)
@@ -692,7 +782,7 @@ def run_backtest_ai(
     3. Mô phỏng mua/bán.
     """
     if AIEngine is None or ticker_df.empty:
-        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': "Thiếu mô đun AI hoặc dữ liệu"}
+        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': "AI module or data missing"}
 
     engine = AIEngine()
     
@@ -703,7 +793,7 @@ def run_backtest_ai(
     # 2. Xây dựng bộ Feature đầy đủ
     full_df = engine.prepare_features(ticker_df, macro_df, foreign_df)
     if len(full_df) < 50:
-        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': f"Không đủ dữ liệu cho AI (cần >50 phiên, hiện có {len(full_df)})"}
+        return {'total_return': 0, 'win_rate': 0, 'total_trades': 0, 'trades': [], 'summary': f"Insufficient data for AI (need >50 sessions, current: {len(full_df)})"}
 
     # 3. Chia tập Train/Test theo thời gian (Tránh data leakage)
     split_idx = int(len(full_df) * train_split)
@@ -764,3 +854,430 @@ def run_backtest_ai(
         'equity_curve': (1 + df_trades['pnl']).cumprod(),
         'train_info': f"Đã huấn luyện trên {len(train_data)} phiên, Test trên {len(test_data)} phiên."
     }
+
+
+# ─────────────────────────────────────────────
+# MA Detail Table (Above/Below MA10, MA20, MA50)
+# ─────────────────────────────────────────────
+
+def compute_ma_detail_table(prices_dict: dict, periods: list = [10, 20, 50]) -> pd.DataFrame:
+    """
+    Bảng chi tiết cổ phiếu nằm trên/dưới các đường MA.
+    Mỗi cổ phiếu 1 dòng, có cột:
+      - Mã, Giá, % thay đổi
+      - MA10, MA20, MA50 (giá trị)
+      - Trên_MA10, Trên_MA20, Trên_MA50 (True/False)
+      - Khoảng cách (%) so với từng MA
+      - Tổng MA trên (0-3)
+      - Thanh khoản TB (Tỷ)
+    """
+    rows = []
+    for ticker, data in prices_dict.items():
+        # Bỏ qua chỉ số
+        if ticker in ['VNINDEX', 'HNXINDEX', 'UPINDEX', 'VN30', 'VN100', 'HNX30']:
+            continue
+        
+        closes = data.get('close', [])
+        volumes = data.get('volume', [])
+        if len(closes) < max(periods) + 1:
+            continue
+        
+        last_close = closes[-1]
+        change_pct = data.get('change_pct', 0)
+        
+        # Tính thanh khoản TB 20 phiên (tỷ VNĐ): (Giá * KL) / 1e6
+        n = min(len(closes), len(volumes), 20)
+        c_arr = np.array(closes[-n:])
+        v_arr = np.array(volumes[-n:])
+        avg_liq = float(np.mean(c_arr * v_arr) / 1e6)
+        
+        row = {
+            'Symbol': ticker,
+            'Price': last_close,
+            '% Change': change_pct,
+            'Avg Turnover (B)': round(avg_liq, 2),
+        }
+        
+        total_above = 0
+        for p in periods:
+            if len(closes) >= p:
+                ma_val = float(np.mean(closes[-p:]))
+                above = last_close > ma_val
+                dist_pct = (last_close - ma_val) / ma_val * 100 if ma_val != 0 else 0
+                row[f'MA{p}'] = round(ma_val, 2)
+                row[f'Above MA{p}'] = above
+                row[f'%vs MA{p}'] = round(dist_pct, 2)
+                if above:
+                    total_above += 1
+            else:
+                row[f'MA{p}'] = None
+                row[f'Trên MA{p}'] = None
+                row[f'%vs MA{p}'] = None
+        
+        row['Total MAs Above'] = total_above
+        rows.append(row)
+    
+    if not rows:
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(rows)
+    # Sắp xếp: trên cả 3 MA trước, rồi theo % thay đổi
+    df = df.sort_values(['Tổng MA trên', '% Thay đổi'], ascending=[False, False])
+    return df.reset_index(drop=True)
+
+
+# ─────────────────────────────────────────────
+# Index Influence — Cổ phiếu ảnh hưởng chỉ số
+# ─────────────────────────────────────────────
+
+def compute_index_influence(prices_dict: dict, top_n: int = 30) -> pd.DataFrame:
+    """
+    Ước tính mức ảnh hưởng của từng cổ phiếu đến chỉ số VNINDEX.
+    
+    Logic:
+    - Dùng GTGD trung bình 20 phiên làm proxy cho trọng số vốn hóa
+      (cổ phiếu thanh khoản lớn → vốn hóa lớn → ảnh hưởng nhiều đến chỉ số)
+    - Đóng góp điểm = (trọng số vốn hóa) x (% thay đổi giá) / 100
+    - Sắp xếp theo |đóng góp| giảm dần
+    
+    Trả về DataFrame:
+        Mã, Giá, % Thay đổi, GTGD TB (Tỷ), Vốn hóa ước tính %, Đóng góp (điểm),
+        Loại tác động (Tích cực/Tiêu cực)
+    """
+    # Bước 1: Thu thập thông tin và tính GTGD trung bình
+    stock_info = []
+    for ticker, data in prices_dict.items():
+        if ticker in ['VNINDEX', 'HNXINDEX', 'UPINDEX', 'VN30', 'VN100', 'HNX30']:
+            continue
+        
+        closes = data.get('close', [])
+        volumes = data.get('volume', [])
+        change_pct = data.get('change_pct', 0)
+        
+        if len(closes) < 2 or len(volumes) < 2:
+            continue
+        
+        last_close = closes[-1]
+        
+        # GTGD trung bình 20 phiên gần nhất (tỷ VNĐ)
+        n = min(len(closes), len(volumes), 20)
+        c_arr = np.array(closes[-n:])
+        v_arr = np.array(volumes[-n:])
+        avg_value_bn = float(np.mean(c_arr * v_arr) / 1e6)
+        
+        stock_info.append({
+            'ticker': ticker,
+            'close': last_close,
+            'change_pct': change_pct,
+            'avg_value_bn': avg_value_bn,
+        })
+    
+    if not stock_info:
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(stock_info)
+    
+    # Bước 2: Trọng số ước tính (dựa trên GTGD)
+    total_value = df['avg_value_bn'].sum()
+    if total_value == 0:
+        return pd.DataFrame()
+    
+    df['weight_pct'] = df['avg_value_bn'] / total_value * 100
+    
+    # Bước 3: Đóng góp điểm (đơn vị tương đối)
+    # Nếu VNINDEX có dữ liệu, dùng giá trị VNI để quy đổi
+    vnindex_data = prices_dict.get('VNINDEX', {})
+    vnindex_close = vnindex_data.get('close', [0])[-1] if vnindex_data.get('close') else 1000
+    
+    df['contribution'] = df['weight_pct'] * df['change_pct'] / 100
+    # Quy đổi thành "điểm" VNIndex tương đối
+    df['contribution_pts'] = df['contribution'] * vnindex_close / 100
+    
+    df['abs_contribution'] = df['contribution_pts'].abs()
+    df = df.sort_values('abs_contribution', ascending=False)
+    
+    # Step 4: Format output
+    result_rows = []
+    for _, row in df.head(top_n).iterrows():
+        impact_type = '🟢 Positive' if row['change_pct'] > 0 else ('🔴 Negative' if row['change_pct'] < 0 else '⚪ Unchanged')
+        result_rows.append({
+            'Symbol': row['ticker'],
+            'Price': f"{row['close']:,.2f}",
+            '% Change': f"{row['change_pct']:+.2f}%",
+            'Avg Turnover (B)': round(row['avg_value_bn'], 1),
+            'Weight (%)': round(row['weight_pct'], 2),
+            'Contribution (pts)': round(row['contribution_pts'], 3),
+            'Impact Type': impact_type,
+        })
+    
+    return pd.DataFrame(result_rows)
+
+
+# ─────────────────────────────────────────────
+# Market History Combined Table (The image request)
+# ─────────────────────────────────────────────
+
+def compute_market_history_combined(prices_dict: dict, periods: list = [10, 20, 50], lookback: int = 40, **kwargs) -> pd.DataFrame:
+    """
+    Gộp dữ liệu MA, A/D, Supply/Demand vào một bảng lịch sử.
+    Thêm cột nhận xét (Nhận xét/Label) dựa trên tương quan Index và Độ rộng.
+    """
+    # 1. Lấy dữ liệu thành phần
+    ma_hist = compute_ma_history(prices_dict, periods, lookback)
+    ad_hist = compute_ad_history(prices_dict, lookback)
+    pw_hist = compute_market_power_history(prices_dict, lookback)
+    
+    # 2. Lấy dữ liệu Aggressive thực tế (nếu có)
+    agg_results = kwargs.get('agg_results', {})
+    
+    if ma_hist.empty:
+        return pd.DataFrame()
+        
+    # 2. Merge dữ liệu
+    df = ma_hist.copy()
+    if not ad_hist.empty:
+        df = pd.merge(df, ad_hist, on='date', how='left')
+    if not pw_hist.empty:
+        df = pd.merge(df, pw_hist, on='date', how='left')
+        
+    # 2b. Nếu có agg_results, ghi đè giá trị Supply/Demand/Power của ngày cuối cùng bằng dữ liệu chuẩn
+    if agg_results and not df.empty:
+        total_buy_vol = 0
+        total_sell_vol = 0
+        total_power = 0.0
+        
+        for ticker, raw_data in agg_results.items():
+             stats = compute_aggressive_stats(raw_data)
+             total_buy_vol += stats.get('buy_volume', 0)
+             total_sell_vol += stats.get('sell_volume', 0)
+             total_power += stats.get('net_value', 0) # proxy for power
+        
+        # Ghi đè vào dòng cuối (phiên hiện tại) trước khi sort DESC
+        today_idx = df.index[-1]
+        df.at[today_idx, 'supply'] = total_sell_vol / 1e6
+        df.at[today_idx, 'demand'] = total_buy_vol / 1e6
+        df.at[today_idx, 'supply_demand'] = (total_buy_vol - total_sell_vol) / 1e6 # Triệu CP
+        df.at[today_idx, 'power'] = total_power / 1e6 # proxy unit
+
+    # 3. Tính toán cột Change (Index) và RSI
+    if 'VNINDEX' in df.columns:
+        df['Change'] = df['VNINDEX'].diff()
+        df['rsi'] = compute_rsi(df['VNINDEX'], period=14)
+    else:
+        df['Change'] = 0
+        df['rsi'] = 0
+        
+    # 4. Logic Nhận xét (Labels)
+    def label_market(row):
+        try:
+            chg = row.get('Change', 0)
+            adv = row.get('advances', 0)
+            dec = row.get('declines', 0)
+            net_sd = row.get('supply_demand', 0)
+            pct_ma20 = row.get('pct_ma20', 50)
+            rsi = row.get('rsi', 50)
+            
+            labels = []
+            # RSI Signals
+            if rsi >= 70: labels.append("OVERBOUGHT (RSI)")
+            if rsi <= 30: labels.append("OVERSOLD (RSI)")
+
+            # Market Breath Signals
+            if chg > 3 and adv < dec:
+                labels.append("BLUECHIP PUMP")
+            elif chg < -3 and adv > dec:
+                labels.append("BLUECHIP DUMP")
+            
+            if chg > 5 and adv > dec * 1.5:
+                labels.append("BREADTH EXPANSION 🟢")
+            elif chg < -10 and dec > adv * 2:
+                labels.append("BREADTH CRASH 🔴")
+            
+            if net_sd > 200: labels.append("STRONG BUYING")
+            if net_sd < -200: labels.append("STRONG SELLING")
+
+            return " | ".join(labels) if labels else ""
+        except:
+            return ""
+
+    df['Notes'] = df.apply(label_market, axis=1)
+    
+    # 5. Format lại thứ tự cột giống ảnh mẫu
+    # DATE | Change | VNIND | MA10 | MA20 | MA50 | S/D (Net) | Demand | Supply | Power
+    cols_to_keep = ['date', 'Change', 'VNINDEX', 'rsi', 'Notes']
+    for p in periods:
+        cols_to_keep.append(f'count_ma{p}')
+    
+    for c in ['supply_demand', 'demand', 'supply', 'power']:
+        if c in df.columns:
+            cols_to_keep.append(c)
+        
+    df = df[cols_to_keep].sort_values('date', ascending=False)
+    
+    # Friendly column names
+    rename_map = {
+        'date': 'Date',
+        'VNINDEX': 'VNINDEX',
+        'rsi': 'RSI',
+        'supply_demand': 'Net S/D',
+        'demand': 'Demand (M)',
+        'supply': 'Supply (M)',
+        'power': 'Power'
+    }
+    for p in periods:
+        rename_map[f'count_ma{p}'] = f'MA{p}'
+        
+    df = df.rename(columns=rename_map)
+    return df
+
+
+def compute_aggressive_stats(data: list) -> dict:
+    """
+    Tính toán tổng các loại thanh khoản từ dữ liệu Aggressive Trading
+    - Tổng GTGD (Turnover): sum(Price * TotalVolume)
+    - Tổng Mua Chủ động (Agg Buy Value): sum(Price * AggressiveBuyingVolume)
+    - Tổng Bán Chủ động (Agg Sell Value): sum(Price * AggressiveSellingVolume)
+    """
+    # Xử lý trường hợp data là dict {"data": [...]} từ API
+    if isinstance(data, dict) and 'data' in data:
+        data = data['data']
+
+    if not data or not isinstance(data, list):
+        return {
+            'total_value': 0,
+            'buy_value': 0,
+            'sell_value': 0,
+            'net_value': 0,
+            'buy_volume': 0,
+            'sell_volume': 0,
+            'total_value_bn': 0,
+            'net_value_bn': 0
+        }
+    
+    total_val = 0.0
+    buy_val = 0.0
+    sell_val = 0.0
+    buy_vol = 0
+    sell_vol = 0
+    
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+            
+        p = float(item.get('Price', 0))
+        tv = float(item.get('TotalVolume', 0))
+        bv = float(item.get('AggressiveBuyingVolume', 0))
+        sv = float(item.get('AggressiveSellingVolume', 0))
+        
+        # VPS API: Giá chia cho đơn vị VND? Thường là VND.
+        # Nếu Price là 25350 = 25,350 VND.
+        # GTGD = Price * Volume
+        total_val += p * tv
+        buy_val += p * bv
+        sell_val += p * sv
+        buy_vol += bv
+        sell_vol += sv
+        
+    return {
+        'total_value': total_val,
+        'buy_value': buy_val,
+        'sell_value': sell_val,
+        'net_value': buy_val - sell_val,
+        'buy_volume': buy_vol,
+        'sell_volume': sell_vol,
+        'total_value_bn': total_val / 1e9, # Tỷ VNĐ
+        'net_value_bn': (buy_val - sell_val) / 1e9
+    }
+
+
+def compute_liquidity_map(agg_results: dict) -> dict:
+    """Xử lý kết quả batch fetch aggressive → map {ticker: turnover_bn}"""
+    liq_map = {}
+    for ticker, raw_data in agg_results.items():
+        # raw_data có thể là dict {"data": [...]}
+        data_list = raw_data.get('data', []) if isinstance(raw_data, dict) else raw_data
+        stats = compute_aggressive_stats(data_list)
+        if stats['total_value_bn'] > 0:
+            liq_map[ticker] = round(stats['total_value_bn'], 3)
+    return liq_map
+
+
+def compute_sector_liquidity(prices_dict: dict, agg_liq_map: dict = {}) -> pd.DataFrame:
+    """Tính thanh khoản theo dòng tiền ngành"""
+    sector_data = []
+    
+    # 1. Tính mapping ngược (Ticker -> Sector)
+    ticker_to_sector = {}
+    for sector, tickers in SECTOR_MAP.items():
+        for t in tickers:
+            ticker_to_sector[t] = sector
+            
+    # 2. Gom nhóm thanh khoản
+    stats = {} # {sector: {'value': 0, 'count': 0}}
+    
+    for ticker, data in prices_dict.items():
+        sector = ticker_to_sector.get(ticker)
+        if not sector: continue
+        
+        # Lấy thanh khoản (ưu tiên aggressive)
+        liq = agg_liq_map.get(ticker)
+        if liq is None:
+            # Tính trung bình 5 phiên gần nhất
+            vals = np.array(data.get('close', [])) * np.array(data.get('volume', [])) / 1e6 # Tỷ VNĐ
+            liq = np.mean(vals[-5:]) if len(vals) > 0 else 0
+            
+        if sector not in stats:
+            stats[sector] = {'value': 0, 'count': 0}
+        stats[sector]['value'] += liq
+        stats[sector]['count'] += 1
+        
+    for sector, s in stats.items():
+        sector_data.append({
+            'Ngành': sector,
+            'GTGD (Tỷ)': round(s['value'], 1),
+            'Số mã': s['count'],
+            'Bình quân/Mã': round(s['value'] / s['count'], 1) if s['count'] > 0 else 0
+        })
+        
+    return pd.DataFrame(sector_data).sort_values('GTGD (Tỷ)', ascending=False)
+
+
+def compute_mfi(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Money Flow Index (MFI)"""
+    tp = (df['high'] + df['low'] + df['close']) / 3
+    rmf = tp * df['volume']
+    
+    pos_mf = []
+    neg_mf = []
+    
+    for i in range(len(tp)):
+        if i == 0:
+            pos_mf.append(0)
+            neg_mf.append(0)
+        else:
+            if tp[i] > tp[i-1]:
+                pos_mf.append(rmf[i])
+                neg_mf.append(0)
+            elif tp[i] < tp[i-1]:
+                pos_mf.append(0)
+                neg_mf.append(rmf[i])
+            else:
+                pos_mf.append(0)
+                neg_mf.append(0)
+                
+    pos_mf_sum = pd.Series(pos_mf).rolling(window=period).sum()
+    neg_mf_sum = pd.Series(neg_mf).rolling(window=period).sum()
+    
+    mfr = pos_mf_sum / neg_mf_sum
+    mfi = 100 - (100 / (1 + mfr))
+    return mfi
+
+
+def compute_obv(df: pd.DataFrame) -> pd.Series:
+    """On-Balance Volume (OBV)"""
+    return (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+
+
+def compute_vwap(df: pd.DataFrame) -> pd.Series:
+    """Volume Weighted Average Price (VWAP)"""
+    return (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum() / df['volume'].cumsum()
