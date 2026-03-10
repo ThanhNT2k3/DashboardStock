@@ -377,8 +377,8 @@ with st.sidebar:
     st.markdown("### ⚙️ Configuration")
 
     exchange = st.selectbox(
-        "Exchange Selection",
-        options=["HOSE", "HNX", "UPCOM", "VN30", "VN100", "ALL"],
+        "Exchange Selection",   
+        options=["ALL", "HOSE", "HNX", "UPCOM", "VN30", "VN100"],
         index=0,
         help="Select exchange or index bucket to analyze"
     )

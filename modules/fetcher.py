@@ -399,3 +399,84 @@ def fetch_market_valuation() -> dict:
     except Exception as e:
         print(f"Error fetching market valuation: {e}")
     return {}
+
+
+def fetch_and_save_daily_snapshot(
+    compute_market_history_combined_fn,
+    compute_liquidity_map_fn,
+    get_tickers_fn,
+    filename: str = "market_summary_history.csv",
+    min_liq: float = 1.0,
+) -> bool:
+    """
+    Luôn fetch toàn sàn (ALL) với thanh khoản >= 1 Bn rồi lưu snapshot.
+    Gọi độc lập, không phụ thuộc vào session state hay bộ lọc của user.
+
+    Args:
+        compute_market_history_combined_fn: calculator.compute_market_history_combined
+        compute_liquidity_map_fn:           calculator.compute_liquidity_map
+        get_tickers_fn:                     tickers.get_tickers
+        filename:                           đường dẫn file CSV lịch sử
+        min_liq:                            ngưỡng thanh khoản tối thiểu (Tỷ VND)
+
+    Returns:
+        True nếu lưu thành công, False nếu lỗi
+    """
+    try:
+        from datetime import date, timedelta
+
+        # 1. Fetch aggressive toàn sàn để lọc thanh khoản
+        all_tickers = get_tickers_fn("ALL")
+        agg_results = batch_fetch_aggressive(all_tickers)
+        liq_map     = compute_liquidity_map_fn(agg_results)
+        save_liquidity_cache(liq_map)
+
+        # 2. Lọc winners >= min_liq (giữ index tickers)
+        winners = []
+        for t in all_tickers:
+            if t in {'VNINDEX', 'HNXINDEX', 'UPINDEX', 'VN30', 'VN100', 'HNX30'}:
+                winners.append(t)
+                continue
+            if liq_map.get(t, 0) >= min_liq:
+                winners.append(t)
+
+        if len(winners) <= 1:
+            print("[snapshot] Không có ticker nào pass filter")
+            return False
+
+        # 3. Fetch lịch sử giá 720 ngày
+        end_date   = date.today().strftime('%Y-%m-%d')
+        start_date = (date.today() - timedelta(days=720)).strftime('%Y-%m-%d')
+        raw        = batch_fetch(winners, start_date, end_date)
+        prices     = parse_results(raw)
+
+        if not prices:
+            print("[snapshot] parse_results rỗng")
+            return False
+
+        # Gán avg_liquidity_bn
+        for t, d in prices.items():
+            if t in liq_map:
+                d['avg_liquidity_bn'] = liq_map[t]
+
+        # 4. Tính market history combined
+        live_calc = compute_market_history_combined_fn(
+            prices,
+            periods=[10, 20, 50],
+            lookback=60,
+            agg_results=agg_results,
+        )
+
+        if live_calc.empty:
+            print("[snapshot] compute_market_history_combined rỗng")
+            return False
+
+        # 5. Lưu snapshot ngày hôm nay
+        today_df = live_calc.iloc[[0]]
+        save_market_summary_snapshot(today_df, filename)
+        print(f"[snapshot] ✅ Đã lưu snapshot {date.today()} — {len(prices)} tickers")
+        return True
+
+    except Exception as e:
+        print(f"[snapshot] ❌ Lỗi: {e}")
+        return False
