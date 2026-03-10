@@ -428,7 +428,7 @@ with st.sidebar:
         "Min Liquidity (Bn VND/Session)",
         min_value=0.0,
         max_value=100.0,
-        value=10.0,
+        value=1.0,
         step=1.0,
         help="Filter stocks based on turnover"
     )
@@ -633,6 +633,55 @@ if refresh_liq:
             st.sidebar.success(f"✅ Report sent for {today_str}")
     else:
         st.sidebar.info("⏰ Wait until 15:00 to close session and send report.")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🚀 Manual Trigger")
+
+if st.sidebar.button("📤 Fetch & Send Now", use_container_width=True):
+    with st.sidebar:
+        # Step 1: Fetch
+        with st.spinner("⏳ Fetching toàn sàn (>= 1 Bn)..."):
+            try:
+                from datetime import timedelta
+                all_tickers = tk.get_tickers("ALL")
+                agg_res  = fetcher.batch_fetch_aggressive(all_tickers)
+                liq_map  = calculator.compute_liquidity_map(agg_res)
+                fetcher.save_liquidity_cache(liq_map)
+
+                winners = []
+                for t in all_tickers:
+                    if calculator.is_index_ticker(t):
+                        winners.append(t)
+                        continue
+                    if liq_map.get(t, 0) >= 1.0:
+                        winners.append(t)
+
+                fetch_start = (date.today() - timedelta(days=720)).strftime('%Y-%m-%d')
+                fetch_end   = date.today().strftime('%Y-%m-%d')
+                raw = fetcher.batch_fetch(winners, fetch_start, fetch_end)
+                prices = fetcher.parse_results(raw)
+
+                for t, d in prices.items():
+                    if t in liq_map:
+                        d['avg_liquidity_bn'] = liq_map[t]
+
+                stats = compute_all_stats(prices, [10, 20, 50], 60, agg_liq_map=liq_map)
+                st.session_state.stats       = stats
+                st.session_state.agg_liq_map = liq_map
+                st.session_state.data_loaded = True
+                st.success(f"✅ Fetched {len(prices)} tickers")
+            except Exception as e:
+                st.error(f"❌ Fetch lỗi: {e}")
+                st.stop()
+
+        # Step 2: Send Discord
+        with st.spinner("📤 Đang gửi Discord..."):
+            ok = notifier.send_market_summary_sync(st.session_state.stats)
+            if ok:
+                st.session_state.last_discord_send = date.today().strftime('%Y-%m-%d')
+                st.success("✅ Đã gửi Discord!")
+            else:
+                st.error("❌ Gửi Discord thất bại, kiểm tra Webhook!")
 
 
 # ─────────────────────────────────────────────
@@ -1005,14 +1054,17 @@ if run_btn or not st.session_state.data_loaded:
             agg_liq_map = calculator.compute_liquidity_map(agg_results)
             st.session_state.agg_liq_map = agg_liq_map
             fetcher.save_liquidity_cache(agg_liq_map) # Cache lại
-            
+            print("---------------------agg_liq_map---------------------", agg_liq_map)
             # 2. Lọc danh sách mã thỏa mãn điều kiện
+            print("---------------------tickers_to_scan---------------------", tickers_to_scan)
             winners = []
             for t in tickers_to_scan:
                 if calculator.is_index_ticker(t):
                     winners.append(t)
                     continue
                 liq = agg_liq_map.get(t, 0)
+                print("---------------------liq---------------------", liq) 
+                print("---------------------min_liq---------------------", min_liq) 
                 if liq >= min_liq:
                     winners.append(t)
             

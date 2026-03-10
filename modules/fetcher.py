@@ -10,6 +10,7 @@ import pandas as pd
 import os
 from datetime import datetime
 from typing import Optional
+import requests
 
 BASE_URL = "https://histdatafeed.vps.com.vn/tradingview/history"
 AGGRESSIVE_BASE_URL = "https://histdatafeed.vps.com.vn/volumeaggressivetrading"
@@ -176,7 +177,6 @@ def parse_results(raw_results: list) -> dict:
 
 def fetch_aggressive_trading(ticker: str) -> list:
     """Fetch dữ liệu lệnh mua/bán chủ động theo giá của phiên hiện tại"""
-    import requests
     try:
         url = f"{AGGRESSIVE_BASE_URL}/{ticker}"
         r = requests.get(url, timeout=TIMEOUT)

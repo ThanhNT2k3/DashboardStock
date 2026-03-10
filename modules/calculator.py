@@ -45,41 +45,70 @@ def is_index_ticker(ticker: str) -> bool:
 # MA Analysis
 # ─────────────────────────────────────────────
 
-def compute_ma_stats(prices_dict: dict, periods: list = [20, 50, 200]) -> dict:
+
+def compute_ma_stats(prices_dict: dict, periods: list) -> dict:
     """
-    Đếm số cổ phiếu đang giao dịch TRÊN / DƯỚI MA(period)
-    
-    Returns:
-        {
-            20: {'above': 120, 'below': 80, 'total': 200, 'pct_above': 60.0},
-            50: {...},
-            200: {...}
-        }
+    Tính % cổ phiếu trên MAxx tại thời điểm hiện tại (ngày gần nhất).
+
+    FIX: Dùng cùng logic reindex như compute_ma_history để nhất quán.
     """
+    if not prices_dict or not periods:
+        return {p: {'count': 0, 'total': 0, 'pct': 0.0, 'pct_above': 0.0, 'above': 0, 'below': 0} for p in periods}
+
+    max_period = max(periods)
+    warmup = max_period * 2
+
+    # Common timeline
+    all_ts: set = set()
+    for data in prices_dict.values():
+        all_ts.update(data.get('timestamps', []))
+
+    if not all_ts:
+        return {p: {'count': 0, 'total': 0, 'pct': 0.0, 'pct_above': 0.0, 'above': 0, 'below': 0} for p in periods}
+
+    # Dùng warmup*3 để bù cho sparse data (ngày nghỉ, ticker mới niêm yết)
+    working_ts = sorted(all_ts)[-(warmup * 3):]
+
+    closes: dict = {}
+    for ticker, data in prices_dict.items():
+        if ticker in INDEX_TICKERS:
+            continue
+        close_vals = data.get('close', [])
+        ts_vals = data.get('timestamps', [])
+        if len(close_vals) < min(periods):
+            continue
+        s = pd.Series(close_vals, index=ts_vals, dtype=float)
+        # bfill trước để fill NaN ở đầu, ffill cho phần còn lại
+        s = s.reindex(working_ts).bfill().ffill()
+        closes[ticker] = s
+
+    if not closes:
+        return {p: {'count': 0, 'total': 0, 'pct': 0.0, 'pct_above': 0.0, 'above': 0, 'below': 0} for p in periods}
+
+    df_closes = pd.DataFrame(closes)
+    last_t = working_ts[-1]  # Most recent timestamp
+
     result = {}
-    for period in periods:
-        above = below = total = 0
-        for ticker, data in prices_dict.items():
-            if is_index_ticker(ticker):
-                continue
-            closes = data.get('close', [])
-            if len(closes) >= period + 1:
-                ma = float(np.mean(closes[-period:]))
-                last = closes[-1]
-                if last > ma:
-                    above += 1
-                elif last < ma:
-                    below += 1
-                total += 1
-        result[period] = {
-            'above': above,
-            'below': below,
-            'total': total,
-            'pct_above': round(above / total * 100, 1) if total else 0.0,
+    for p in periods:
+        ma_df = df_closes.rolling(window=p, min_periods=p).mean()
+        above_df = df_closes > ma_df
+
+        valid_mask = df_closes.loc[last_t].notna() & ma_df.loc[last_t].notna()
+        total = int(valid_mask.sum())
+        above_count = int(above_df.loc[last_t][valid_mask].sum()) if total > 0 else 0
+        pct = round(above_count / total * 100, 1) if total > 0 else 0.0
+
+        below_count = total - above_count
+        result[p] = {
+            'count':     above_count,
+            'total':     total,
+            'pct':       pct,
+            'pct_above': pct,
+            'above':     above_count,
+            'below':     below_count,
         }
+
     return result
-
-
 def compute_market_power_history(prices_dict: dict, lookback: int = 60) -> pd.DataFrame:
     """
     Tính Supply, Demand, Power theo lịch sử (toàn thị trường)
@@ -136,63 +165,129 @@ def compute_market_power_history(prices_dict: dict, lookback: int = 60) -> pd.Da
     return pd.DataFrame(history)
 
 
-def compute_ma_history(prices_dict: dict, periods: list = [20, 50, 200], lookback: int = 60) -> pd.DataFrame:
+
+INDEX_TICKERS = {'VNINDEX', 'HNXINDEX', 'UPINDEX', 'VN30', 'VN100', 'HNX30'}
+
+
+def compute_ma_history(prices_dict: dict, periods: list, lookback: int) -> pd.DataFrame:
     """
-    Tính % cổ phiếu trên MA theo lịch sử (mỗi ngày)
-    Trả về DataFrame: date, pct_ma20, pct_ma50, pct_ma200...
+    Tính lịch sử % cổ phiếu trên MAxx cho từng ngày.
+
+    FIX v3: Normalize timestamps -> date strings TRUOC khi tinh rolling MA.
+    Tranh duplicate/mismatch timestamps giua cac tickers tu VPS API.
     """
-    # Tìm tất cả timestamps
-    all_ts = set()
-    for data in prices_dict.values():
-        all_ts.update(data.get('timestamps', []))
-    
-    sorted_ts = sorted(list(all_ts))[-lookback:]
-    if not sorted_ts:
+    if not prices_dict or not periods:
         return pd.DataFrame()
 
-    history = []
-    
-    # Để tối ưu, tính MA cho toàn bộ chuỗi của mỗi ticker trước
-    ticker_mas = {}
+    max_period = max(periods)
+    warmup     = max_period * 2
+
+    closes = {}
     for ticker, data in prices_dict.items():
-        closes = np.array(data.get('close', []))
-        ts     = np.array(data.get('timestamps', []))
-        if len(closes) < 10: continue
-        
-        mas = {}
-        for p in periods:
-            if len(closes) >= p:
-                # Simple Moving Average
-                ma_vals = pd.Series(closes).rolling(window=p).mean().values
-                mas[p] = dict(zip(ts, ma_vals))
-        ticker_mas[ticker] = {'closes': dict(zip(ts, closes)), 'mas': mas}
+        if ticker in INDEX_TICKERS:
+            continue
+        close_vals = data.get('close', [])
+        ts_vals    = data.get('timestamps', [])
+        if len(close_vals) < min(periods) or not ts_vals:
+            continue
+        dates = [datetime.fromtimestamp(t).strftime('%Y-%m-%d') for t in ts_vals]
+        s = pd.Series(close_vals, index=dates, dtype=float)
+        s = s[~s.index.duplicated(keep='last')]
+        closes[ticker] = s
 
-    for t in sorted_ts:
-        row = {'date': datetime.fromtimestamp(t).strftime('%Y-%m-%d')}
-        # Thêm VNINDEX nếu có
-        if 'VNINDEX' in prices_dict:
-            vni_data = prices_dict['VNINDEX']
-            vni_ts = vni_data.get('timestamps', [])
-            vni_closes = vni_data.get('close', [])
-            if t in vni_ts:
-                vni_idx = vni_ts.index(t)
-                row['VNINDEX'] = round(vni_closes[vni_idx], 2)
+    if not closes:
+        return pd.DataFrame()
 
-        for p in periods:
-            above = total = 0
-            for ticker, info in ticker_mas.items():
-                if ticker == 'VNINDEX': continue # Bỏ qua VNINDEX trong đếm breadth
-                ma_map = info['mas'].get(p, {})
-                close_map = info['closes']
-                if t in ma_map and t in close_map:
-                    if close_map[t] > ma_map[t]:
-                        above += 1
-                    total += 1
-            row[f'count_ma{p}'] = above
-            row[f'pct_ma{p}'] = round(above / total * 100, 1) if total else 0.0
-        history.append(row)
+    all_dates     = sorted(set().union(*[set(s.index) for s in closes.values()]))
+    working_dates = all_dates[-(lookback + warmup):]
+    output_dates  = working_dates[-lookback:]
 
-    return pd.DataFrame(history)
+    aligned   = {t: s.reindex(working_dates).ffill() for t, s in closes.items()}
+    df_closes = pd.DataFrame(aligned)
+
+    history = {d: {'date': d} for d in output_dates}
+    for p in periods:
+        ma_df    = df_closes.rolling(window=p, min_periods=p).mean()
+        above_df = df_closes > ma_df
+        for date in output_dates:
+            if date not in df_closes.index:
+                history[date][f'count_ma{p}'] = 0
+                history[date][f'pct_ma{p}']   = 0.0
+                continue
+            valid = df_closes.loc[date].notna() & ma_df.loc[date].notna()
+            total = int(valid.sum())
+            above = int(above_df.loc[date][valid].sum()) if total else 0
+            history[date][f'count_ma{p}'] = above
+            history[date][f'pct_ma{p}']   = round(above / total * 100, 1) if total else 0.0
+
+    rows = list(history.values())
+    return pd.DataFrame(rows).sort_values('date').reset_index(drop=True)
+
+
+def compute_ma_stats(prices_dict: dict, periods: list) -> dict:
+    """
+    Tinh % co phieu tren MAxx tai thoi diem hien tai (ngay gan nhat).
+    FIX v3: Dung DATE index, tranh duplicate timestamps tu VPS API.
+    """
+    empty = {p: {'count': 0, 'total': 0, 'pct': 0.0, 'pct_above': 0.0, 'above': 0, 'below': 0} for p in periods}
+    if not prices_dict or not periods:
+        return empty
+
+    max_period = max(periods)
+    warmup     = max_period * 2
+
+    closes = {}
+    for ticker, data in prices_dict.items():
+        if ticker in INDEX_TICKERS:
+            continue
+        close_vals = data.get('close', [])
+        ts_vals    = data.get('timestamps', [])
+        if len(close_vals) < min(periods) or not ts_vals:
+            continue
+        dates = [datetime.fromtimestamp(t).strftime('%Y-%m-%d') for t in ts_vals]
+        s = pd.Series(close_vals, index=dates, dtype=float)
+        s = s[~s.index.duplicated(keep='last')]
+        closes[ticker] = s
+
+    if not closes:
+        return empty
+
+    all_dates     = sorted(set().union(*[set(s.index) for s in closes.values()]))
+    working_dates = all_dates[-(warmup * 3):]
+    aligned       = {t: s.reindex(working_dates).ffill() for t, s in closes.items()}
+    df_closes     = pd.DataFrame(aligned)
+    last_date     = working_dates[-1]
+    sample_tickers = list(df_closes.columns[:5])
+    print(f"[DEBUG SAMPLE] 5 tickers: {sample_tickers}")
+    for t in sample_tickers:
+        last_close = df_closes.loc[last_date, t]
+        ma10 = df_closes[t].rolling(10, min_periods=10).mean().loc[last_date]
+        ma20 = df_closes[t].rolling(20, min_periods=20).mean().loc[last_date]
+        print(f"  {t}: close={last_close:.2f}, MA10={ma10:.2f}, MA20={ma20:.2f}, above_MA10={last_close>ma10}, above_MA20={last_close>ma20}")
+    
+    vnm = df_closes.get('VNM')
+    if vnm is not None:
+        print(f"[DEBUG VNM] Last 15 closes:")
+        print(vnm.tail(15).to_string())
+    
+    result = {}
+    for p in periods:
+        ma_df       = df_closes.rolling(window=p, min_periods=p).mean()
+        above_df    = df_closes > ma_df
+        valid       = df_closes.loc[last_date].notna() & ma_df.loc[last_date].notna()
+        total       = int(valid.sum())
+        above_count = int(above_df.loc[last_date][valid].sum()) if total else 0
+        below_count = total - above_count
+        pct         = round(above_count / total * 100, 1) if total else 0.0
+        result[p] = {
+            'count': above_count, 'total': total,
+            'pct': pct, 'pct_above': pct,
+            'above': above_count, 'below': below_count,
+        }
+    above_ma10 = [t for t in df_closes.columns 
+        if df_closes.loc[last_date, t] > df_closes[t].rolling(10, min_periods=10).mean().loc[last_date]]
+    print(f"[DEBUG ABOVE MA10] {sorted(above_ma10)}")
+    return result
 
 
 # ─────────────────────────────────────────────
@@ -1045,6 +1140,19 @@ def compute_market_history_combined(prices_dict: dict, periods: list = [10, 20, 
         df = pd.merge(df, ad_hist, on='date', how='left')
     if not pw_hist.empty:
         df = pd.merge(df, pw_hist, on='date', how='left')
+
+    # 2c. Merge VNINDEX price từ prices_dict vào df (nếu có)
+    vnindex_data = prices_dict.get('VNINDEX', {})
+    vni_ts   = vnindex_data.get('timestamps', [])
+    vni_close = vnindex_data.get('close', [])
+    if vni_ts and vni_close:
+        vni_series = pd.Series(vni_close, index=vni_ts)
+        vni_df = pd.DataFrame({
+            'date':    [datetime.fromtimestamp(t).strftime('%Y-%m-%d') for t in vni_ts],
+            'VNINDEX': vni_close
+        })
+        vni_df = vni_df.drop_duplicates('date')
+        df = pd.merge(df, vni_df, on='date', how='left')
         
     # 2b. Nếu có agg_results, ghi đè giá trị Supply/Demand/Power của ngày cuối cùng bằng dữ liệu chuẩn
     if agg_results and not df.empty:
@@ -1113,11 +1221,13 @@ def compute_market_history_combined(prices_dict: dict, periods: list = [10, 20, 
     cols_to_keep = ['date', 'Change', 'VNINDEX', 'rsi', 'Notes']
     for p in periods:
         cols_to_keep.append(f'count_ma{p}')
-    
     for c in ['supply_demand', 'demand', 'supply', 'power']:
         if c in df.columns:
             cols_to_keep.append(c)
-        
+
+    # Safety: chỉ giữ các cột thực sự tồn tại trong df
+    cols_to_keep = [c for c in cols_to_keep if c in df.columns]
+
     df = df[cols_to_keep].sort_values('date', ascending=False)
     
     # Friendly column names
